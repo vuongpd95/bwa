@@ -20,6 +20,9 @@
 #  include "malloc_wrap.h"
 #endif
 
+#include "se_kernel.h"
+extern void test_wrapper();
+
 /* Theory on probability and scoring *ungapped* alignment
  *
  * s'(a,b) = log[P(b|a)/P(b)] = log[4P(b|a)], assuming uniform base distribution
@@ -631,6 +634,7 @@ static inline int cal_max_gap(const mem_opt_t *opt, int qlen)
 
 void mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, const mem_chain_t *c, mem_alnreg_v *av)
 {
+	test_wrapper();
 	int i, k, rid, max_off[2], aw[2]; // aw: actual bandwidth used in extension
 	int64_t l_pac = bns->l_pac, rmax[2], tmp, max = 0;
 	const mem_seed_t *s;
