@@ -74,7 +74,8 @@ static void *process(void *shared, int step, void *_data)
 			}
 			if (n_sep[1]) {
 				tmp_opt.flag |= MEM_F_PE;
-				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed + n_sep[0], n_sep[1], sep[1], aux->pes0);
+				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed + n_sep[0], n_sep[1], sep[1], \
+						aux->pes0);
 				for (i = 0; i < n_sep[1]; ++i)
 					data->seqs[sep[1][i].id].sam = sep[1][i].sam;
 			}
@@ -318,6 +319,8 @@ int main_mem(int argc, char *argv[])
 		}
 	} else update_a(opt, &opt0);
 	bwa_fill_scmat(opt->a, opt->b, opt->mat);
+
+	printf("argv[...] = %s, %s, %s \n", argv[optind], argv[optind+1], argv[optind+2]);
 
 	if ((aux.idx = bwa_idx_load(argv[optind], BWA_IDX_ALL)) == 0) return 1; // FIXME: memory leak
 	if (ignore_alt)

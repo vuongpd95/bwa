@@ -632,7 +632,8 @@ static inline int cal_max_gap(const mem_opt_t *opt, int qlen)
 
 #define MAX_BAND_TRY  2
 
-void mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, const mem_chain_t *c, mem_alnreg_v *av)
+void mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, \
+		const mem_chain_t *c, mem_alnreg_v *av)
 {
 	test_wrapper();
 	int i, k, rid, max_off[2], aw[2]; // aw: actual bandwidth used in extension
@@ -1181,9 +1182,11 @@ static void worker1(void *data, int i, int tid)
 		w->regs[i] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[i].l_seq, w->seqs[i].seq, w->aux[tid]);
 	} else {
 		if (bwa_verbose >= 4) printf("=====> Processing read '%s'/1 <=====\n", w->seqs[i<<1|0].name);
-		w->regs[i<<1|0] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[i<<1|0].l_seq, w->seqs[i<<1|0].seq, w->aux[tid]);
+		w->regs[i<<1|0] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[i<<1|0].l_seq, w->seqs[i<<1|0].seq,\
+				w->aux[tid]);
 		if (bwa_verbose >= 4) printf("=====> Processing read '%s'/2 <=====\n", w->seqs[i<<1|1].name);
-		w->regs[i<<1|1] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[i<<1|1].l_seq, w->seqs[i<<1|1].seq, w->aux[tid]);
+		w->regs[i<<1|1] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[i<<1|1].l_seq, w->seqs[i<<1|1].seq, \
+				w->aux[tid]);
 	}
 }
 
@@ -1205,7 +1208,8 @@ static void worker2(void *data, int i, int tid)
 	}
 }
 
-void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int64_t n_processed, int n, bseq1_t *seqs, const mem_pestat_t *pes0)
+void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int64_t n_processed, \
+		int n, bseq1_t *seqs, const mem_pestat_t *pes0)
 {
 	extern void kt_for(int n_threads, void (*func)(void*,int,int), void *data, int n);
 	worker_t w;
@@ -1216,8 +1220,12 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bn
 	ctime = cputime(); rtime = realtime();
 	global_bns = bns;
 	w.regs = malloc(n * sizeof(mem_alnreg_v));
-	w.opt = opt; w.bwt = bwt; w.bns = bns; w.pac = pac;
-	w.seqs = seqs; w.n_processed = n_processed;
+	w.opt = opt;
+	w.bwt = bwt;
+	w.bns = bns;
+	w.pac = pac;
+	w.seqs = seqs;
+	w.n_processed = n_processed;
 	w.pes = &pes[0];
 	w.aux = malloc(opt->n_threads * sizeof(smem_aux_t));
 	for (i = 0; i < opt->n_threads; ++i)
