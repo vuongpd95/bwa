@@ -52,6 +52,7 @@ typedef struct {
 	int max_ins;            // when estimating insert size distribution, skip pairs with insert longer than this value
 	int max_matesw;         // perform maximally max_matesw rounds of mate-SW for each end
 	int max_XA_hits, max_XA_hits_alt; // if there are max_hits or fewer, output them all
+	int cuda_num_thread;	// Specified if the option to execute seed extension step in CUDA, this var is the number of CUDA threads will be used.
 	int8_t mat[25];         // scoring matrix; mat[0] == 0 if unset
 } mem_opt_t;
 
@@ -94,6 +95,42 @@ typedef struct { // This struct is only used for the convenience of API.
 
 	int score, sub, alt_sc;
 } mem_aln_t;
+
+/************
+ * Chaining *
+ ************/
+
+typedef struct {
+	int64_t rbeg;
+	int32_t qbeg, len;
+	int score;
+} mem_seed_t; // unaligned memory
+
+typedef struct {
+	int n, m, first, rid;
+	uint32_t w:29, kept:2, is_alt:1;
+	float frac_rep;
+	int64_t pos;
+	mem_seed_t *seeds;
+} mem_chain_t;
+
+typedef struct { size_t n, m; mem_chain_t *a;  } mem_chain_v;
+
+typedef struct {
+	bwtintv_v mem, mem1, *tmpv[2];
+} smem_aux_t;
+
+typedef struct {
+	const mem_opt_t *opt;
+	const bwt_t *bwt;
+	const bntseq_t *bns;
+	const uint8_t *pac;
+	const mem_pestat_t *pes;
+	smem_aux_t **aux;
+	bseq1_t *seqs;
+	mem_alnreg_v *regs;
+	int64_t n_processed;
+} worker_t;
 
 #ifdef __cplusplus
 extern "C" {
