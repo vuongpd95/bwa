@@ -49,6 +49,7 @@ mem_opt_t *mem_opt_init()
 {
 	mem_opt_t *o;
 	o = calloc(1, sizeof(mem_opt_t));
+	o->cuda_num_thread = 1;
 	o->flag = 0;
 	o->a = 1; o->b = 4;
 	o->o_del = o->o_ins = 6;
