@@ -12,26 +12,10 @@
 #include "utils.h"
 #include "bntseq.h"
 #include "kseq.h"
-KSEQ_DECLARE(gzFile)
 
 extern unsigned char nst_nt4_table[256];
 
 void kt_pipeline(int n_threads, void *(*func)(void*, int, void*), void *shared_data, int n_steps);
-
-typedef struct {
-	kseq_t *ks, *ks2;
-	mem_opt_t *opt;
-	mem_pestat_t *pes0;
-	int64_t n_processed;
-	int copy_comment, actual_chunk_size;
-	bwaidx_t *idx;
-} ktp_aux_t;
-
-typedef struct {
-	ktp_aux_t *aux;
-	int n_seqs;
-	bseq1_t *seqs;
-} ktp_data_t;
 
 static void *process(void *shared, int step, void *_data)
 {
@@ -321,8 +305,6 @@ int main_mem(int argc, char *argv[])
 		}
 	} else update_a(opt, &opt0);
 	bwa_fill_scmat(opt->a, opt->b, opt->mat);
-
-	printf("argv[...] = %s, %s, %s \n", argv[optind], argv[optind+1], argv[optind+2]);
 
 	if ((aux.idx = bwa_idx_load(argv[optind], BWA_IDX_ALL)) == 0) return 1; // FIXME: memory leak
 	if (ignore_alt)
