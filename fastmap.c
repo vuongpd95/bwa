@@ -12,6 +12,7 @@
 #include "utils.h"
 #include "bntseq.h"
 #include "kseq.h"
+#include "se_kernel.h"
 
 extern unsigned char nst_nt4_table[256];
 
