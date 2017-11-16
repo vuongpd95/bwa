@@ -40,8 +40,12 @@ void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
 
 // Constant variables, tested, usable and can apply to all const needed variables.
 __constant__ mem_opt_t d_opt;
-__constant__ bwaidx_t d_bwaidx;
+__constant__ bwaidx_t d_idx;
 
+__global__ 
+void mem_process_seqs_kernel(ktp_data_t *data) {
+	
+}
 static void *cuda_process(void *shared, int step, void *_data)
 {
 	ktp_aux_t *aux = (ktp_aux_t*)shared;
@@ -80,35 +84,27 @@ static void *cuda_process(void *shared, int step, void *_data)
 			fprintf(stderr, "[M::%s] read %d sequences (%ld bp)...\n", __func__, ret->n_seqs, (long)size);
 		return ret;
 	} else if (step == 1) {
-		const mem_opt_t *opt = aux->opt; // push to cuda constant
-		const bwaidx_t *idx = aux->idx; // push to cuda constant
-		// Push all the content of rest of the block to CUDA kernels.
-		/****		
-		if (opt->flag & MEM_F_SMARTPE) { 
-			bseq1_t *sep[2];
-			int n_sep[2];
-			mem_opt_t tmp_opt = *opt;
-			bseq_classify(data->n_seqs, data->seqs, n_sep, sep);
-			if (bwa_verbose >= 3)
-				fprintf(stderr, "[M::%s] %d single-end sequences; %d paired-end sequences\n", __func__, n_sep[0], n_sep[1]);
-			if (n_sep[0]) {
-				tmp_opt.flag &= ~MEM_F_PE;
-				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, n_sep[0], sep[0], 0);
-				for (i = 0; i < n_sep[0]; ++i)
-					data->seqs[sep[0][i].id].sam = sep[0][i].sam;
-			}
-			if (n_sep[1]) {
-				tmp_opt.flag |= MEM_F_PE;
-				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed + n_sep[0], n_sep[1], sep[1], \
-						aux->pes0);
-				for (i = 0; i < n_sep[1]; ++i)
-					data->seqs[sep[1][i].id].sam = sep[1][i].sam;
-			}
-			free(sep[0]); free(sep[1]);
-		} else mem_process_seqs(opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, data->n_seqs, data->seqs, aux->pes0);
-		aux->n_processed += data->n_seqs;
-		****/
-		
+		const mem_opt_t *opt = aux->opt;
+		const bwaidx_t *idx = aux->idx;
+		// push the above variables to CUDA symbols
+		gpuErrchk(cudaMemcpyToSymbol(d_opt, opt, sizeof(mem_opt_t), 0, cudaMemcpyHostToDevice));
+		gpuErrchk(cudaMemcpyToSymbol(d_idx, idx, sizeof(bwaidx_t), 0, cudaMemcpyHostToDevice));
+		// push data to CUDA shared memory
+		ktp_data_t *d_data;
+		gpuErrchk(cudaMalloc(&d_data, opt->cuda_num_thread * sizeof(ktp_data_t)));
+		gpuErrchk(cudaMemcpy(d_data, data, opt->cuda_num_thread * sizeof(ktp_data_t), cudaMemcpyHostToDevice));		
+		// push the original mem_process_seqs to mem_process_seqs_kernel
+		mem_process_seqs_kernel<<<1, 1>>>(d_data);
+		// check if the kernel is running fine
+		cudaError_t err = cudaGetLastError();
+		if (err != cudaSuccess) {
+			fprintf(stderr, "[M::%s] error while running mem_process_seqs_kernel: %s\n", \
+				__func__, \
+				cudaGetErrorString(err));
+			exit(1);
+		}
+		// get the data back from the GPUs
+		gpuErrchk(cudaMemcpy(data, d_data, opt->cuda_num_thread * sizeof(ktp_data_t),cudaMemcpyDeviceToHost));
 		return data;
 	} else if (step == 2) {
 		for (j = 0; j < aux->opt->cuda_num_thread; j++) {
@@ -128,3 +124,4 @@ static void *cuda_process(void *shared, int step, void *_data)
 	}
 	return 0;
 }
+
