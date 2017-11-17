@@ -1,4 +1,3 @@
-
 /******************************************************************************
 * PROGRAM: se_kernel
 * PURPOSE: This is a collection of functions which is used to optimize the 
@@ -7,7 +6,7 @@
 *
 * NAME: Vuong Pham-Duy.
 	College student.
-*       Faculty of Computer Science and Technology.
+*       Faculty of Computer Science and Engineering.
 *       Ho Chi Minh University of Technology, Viet Nam.
 *       vuongpd95@gmail.com
 *
@@ -46,6 +45,7 @@ __global__
 void mem_process_seqs_kernel(ktp_data_t *data) {
 	
 }
+
 static void *cuda_process(void *shared, int step, void *_data)
 {
 	ktp_aux_t *aux = (ktp_aux_t*)shared;
