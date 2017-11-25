@@ -53,7 +53,7 @@ typedef struct {
 	int max_ins;            // when estimating insert size distribution, skip pairs with insert longer than this value
 	int max_matesw;         // perform maximally max_matesw rounds of mate-SW for each end
 	int max_XA_hits, max_XA_hits_alt; // if there are max_hits or fewer, output them all
-	int cuda_num_thread;	// Specified if the option to execute seed extension step in CUDA, this var is the number of CUDA threads will be used.
+	int cuda_num_threads;	// Specified if the option to execute seed extension step in CUDA, this var is the number of CUDA threads will be used.
 	int8_t mat[25];         // scoring matrix; mat[0] == 0 if unset
 } mem_opt_t;
 
@@ -130,6 +130,7 @@ typedef struct {
 	smem_aux_t **aux;
 	bseq1_t *seqs;
 	mem_alnreg_v *regs;
+	mem_chain_v *chns;
 	int64_t n_processed;
 } worker_t;
 
@@ -154,6 +155,17 @@ typedef struct {
 extern "C" {
 #endif
 
+	void worker1(void *data, int i, int tid);
+	void worker2(void *data, int i, int tid);
+	mem_chain_v mem_chain(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, int len, const uint8_t *seq, void *buf);
+	int mem_chain_flt(const mem_opt_t *opt, int n_chn, mem_chain_t *a);
+	void mem_flt_chained_seeds(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, int n_chn, mem_chain_t *a);
+	void mem_print_chain(const bntseq_t *bns, mem_chain_v *chn);
+	int mem_sort_dedup_patch(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, uint8_t *query, int n, mem_alnreg_t *a);
+	void kt_for(int n_threads, void (*func)(void*, int, int), void *data, long n);
+
+	smem_aux_t *smem_aux_init();
+	void smem_aux_destroy(smem_aux_t *a);
 	smem_i *smem_itr_init(const bwt_t *bwt);
 	void smem_itr_destroy(smem_i *itr);
 	void smem_set_query(smem_i *itr, int len, const uint8_t *query);

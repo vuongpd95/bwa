@@ -45,26 +45,26 @@ static void *process(void *shared, int step, void *_data)
 		const mem_opt_t *opt = aux->opt;
 		const bwaidx_t *idx = aux->idx;
 		if (opt->flag & MEM_F_SMARTPE) {
-			bseq1_t *sep[2];
-			int n_sep[2];
+			bseq1_t *seq[2];
+			int n_seq[2];
 			mem_opt_t tmp_opt = *opt;
-			bseq_classify(data->n_seqs, data->seqs, n_sep, sep);
+			bseq_classify(data->n_seqs, data->seqs, n_seq, seq);
 			if (bwa_verbose >= 3)
-				fprintf(stderr, "[M::%s] %d single-end sequences; %d paired-end sequences\n", __func__, n_sep[0], n_sep[1]);
-			if (n_sep[0]) {
+				fprintf(stderr, "[M::%s] %d single-end sequences; %d paired-end sequences\n", __func__, n_seq[0], n_seq[1]);
+			if (n_seq[0]) {
 				tmp_opt.flag &= ~MEM_F_PE;
-				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, n_sep[0], sep[0], 0);
-				for (i = 0; i < n_sep[0]; ++i)
-					data->seqs[sep[0][i].id].sam = sep[0][i].sam;
+				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, n_seq[0], seq[0], 0);
+				for (i = 0; i < n_seq[0]; ++i)
+					data->seqs[seq[0][i].id].sam = seq[0][i].sam;
 			}
-			if (n_sep[1]) {
+			if (n_seq[1]) {
 				tmp_opt.flag |= MEM_F_PE;
-				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed + n_sep[0], n_sep[1], sep[1], \
+				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed + n_seq[0], n_seq[1], seq[1], \
 						aux->pes0);
-				for (i = 0; i < n_sep[1]; ++i)
-					data->seqs[sep[1][i].id].sam = sep[1][i].sam;
+				for (i = 0; i < n_seq[1]; ++i)
+					data->seqs[seq[1][i].id].sam = seq[1][i].sam;
 			}
-			free(sep[0]); free(sep[1]);
+			free(seq[0]); free(seq[1]);
 		} else mem_process_seqs(opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, data->n_seqs, data->seqs, aux->pes0);
 		aux->n_processed += data->n_seqs;
 		return data;
@@ -147,7 +147,7 @@ int main_mem(int argc, char *argv[])
 		else if (c == 'C') aux.copy_comment = 1;
 		else if (c == 'K') fixed_chunk_size = atoi(optarg);
 		else if (c == 'X') opt->mask_level = atof(optarg);
-		else if (c == 'g') opt->cuda_num_thread = atoi(optarg);
+		else if (c == 'g') opt->cuda_num_threads = atoi(optarg);
 		else if (c == 'h') {
 			opt0.max_XA_hits = opt0.max_XA_hits_alt = 1;
 			opt->max_XA_hits = opt->max_XA_hits_alt = strtol(optarg, &p, 10);
@@ -333,7 +333,15 @@ int main_mem(int argc, char *argv[])
 		}
 	}
 	bwa_print_sam_hdr(aux.idx->bns, hdr_line);
-	aux.actual_chunk_size = fixed_chunk_size > 0? fixed_chunk_size : opt->chunk_size * opt->n_threads;
+	if(fixed_chunk_size > 0) {
+		if(opt->cuda_num_threads > 0) {
+			aux.actual_chunk_size = fixed_chunk_size * opt->cuda_num_threads;
+		} else {
+			aux.actual_chunk_size = fixed_chunk_size;
+		}
+	} else {
+		aux.actual_chunk_size = opt->chunk_size * opt->n_threads;
+	}
 	kt_pipeline(no_mt_io? 1 : 2, process, &aux, 3);
 	free(hdr_line);
 	free(opt);

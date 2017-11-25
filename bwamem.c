@@ -49,7 +49,7 @@ mem_opt_t *mem_opt_init()
 {
 	mem_opt_t *o;
 	o = calloc(1, sizeof(mem_opt_t));
-	o->cuda_num_thread = 1;
+	o->cuda_num_threads = -1;
 	o->flag = 0;
 	o->a = 1; o->b = 4;
 	o->o_del = o->o_ins = 6;
@@ -92,7 +92,7 @@ mem_opt_t *mem_opt_init()
 KSORT_INIT(mem_intv, bwtintv_t, intv_lt)
 
 
-static smem_aux_t *smem_aux_init()
+smem_aux_t *smem_aux_init()
 {
 	smem_aux_t *a;
 	a = calloc(1, sizeof(smem_aux_t));
@@ -101,7 +101,7 @@ static smem_aux_t *smem_aux_init()
 	return a;
 }
 
-static void smem_aux_destroy(smem_aux_t *a)
+void smem_aux_destroy(smem_aux_t *a)
 {	
 	free(a->tmpv[0]->a); free(a->tmpv[0]);
 	free(a->tmpv[1]->a); free(a->tmpv[1]);
@@ -1175,7 +1175,7 @@ mem_aln_t mem_reg2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *
 	return a;
 }
 
-static void worker1(void *data, int i, int tid)
+void worker1(void *data, int i, int tid)
 {
 	worker_t *w = (worker_t*)data;
 	if (!(w->opt->flag&MEM_F_PE)) {
@@ -1191,7 +1191,7 @@ static void worker1(void *data, int i, int tid)
 	}
 }
 
-static void worker2(void *data, int i, int tid)
+void worker2(void *data, int i, int tid)
 {
 	extern int mem_sam_pe(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, const mem_pestat_t pes[4], uint64_t id, bseq1_t s[2], mem_alnreg_v a[2]);
 	extern void mem_reg2ovlp(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, bseq1_t *s, mem_alnreg_v *a);
@@ -1212,7 +1212,6 @@ static void worker2(void *data, int i, int tid)
 void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int64_t n_processed, \
 		int n, bseq1_t *seqs, const mem_pestat_t *pes0)
 {
-	extern void kt_for(int n_threads, void (*func)(void*,int,int), void *data, int n);
 	worker_t w;
 	mem_pestat_t pes[4];
 	double ctime, rtime;
