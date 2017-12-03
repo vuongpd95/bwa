@@ -620,7 +620,6 @@ void mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac
 	// get the max possible span
 	rmax[0] = l_pac << 1;
 	rmax[1] = 0;
-	// TODO: Convert the following for block to CUDA
 	for (i = 0; i < c->n; ++i) {
 		int64_t b, e;
 		const mem_seed_t *t = &c->seeds[i];
@@ -648,7 +647,6 @@ void mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac
 	for (i = 0; i < c->n; ++i)
 		srt[i] = (uint64_t)c->seeds[i].score<<32 | i;
 	ks_introsort_64(c->n, srt);
-	// TODO: Convert the following for block to CUDA
 	for (k = c->n - 1; k >= 0; --k) {
 		mem_alnreg_t *a;
 		s = &c->seeds[(uint32_t)srt[k]];
