@@ -54,6 +54,7 @@ void cuda_mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, \
 	ctime = cputime(); rtime = realtime();
 
 	w.regs = (mem_alnreg_v*)malloc(n * sizeof(mem_alnreg_v));
+	w.chns = (mem_chain_v*)malloc(n * sizeof(mem_chain_v));
 	w.opt = opt;
 	w.bwt = bwt;
 	w.bns = bns;
@@ -141,7 +142,6 @@ mem_chain_v chain_mem_core(const mem_opt_t *opt, const bwt_t *bwt, \
 	chn = mem_chain(opt, bwt, bns, l_seq, (uint8_t*)seq, buf);
 	chn.n = mem_chain_flt(opt, chn.n, chn.a);
 	mem_flt_chained_seeds(opt, bns, pac, l_seq, (uint8_t*)seq, chn.n, chn.a);
-	if (bwa_verbose >= 4) mem_print_chain(bns, &chn);
 	
 	return chn;	
 }
