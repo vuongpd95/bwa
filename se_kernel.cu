@@ -447,7 +447,6 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 		acc_a += chns[i].n;
 	}
 
-	gpuErrchk(cudaMemcpyToSymbol(&d_pac, pac, sizeof(uint8_t)));
 	gpuErrchk(cudaMemcpyToSymbol(&d_opt, opt, sizeof(mem_opt_t)));
 
 	gpuErrchk(cudaMalloc(&d_anns, bns->n_seqs * sizeof(bntann1_t)));
