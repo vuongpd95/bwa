@@ -30,4 +30,16 @@
 		<nature>org.eclipse.cdt.managedbuilder.core.ScannerConfigNature</nature>
 		<nature>org.eclipse.cdt.autotools.core.autotoolsNatureV2</nature>
 	</natures>
+	<linkedResources>
+		<link>
+			<name>cuda_include</name>
+			<type>2</type>
+			<location>/usr/local/cuda-7.0/targets/x86_64-linux/include</location>
+		</link>
+		<link>
+			<name>include</name>
+			<type>2</type>
+			<location>/usr/include</location>
+		</link>
+	</linkedResources>
 </projectDescription>
