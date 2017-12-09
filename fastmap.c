@@ -345,7 +345,7 @@ int main_mem(int argc, char *argv[])
 		}
 	} else {
 		if(opt->cuda_num_threads > 0) {
-			aux.actual_chunk_size = opt->cuda_num_threads;
+			aux.actual_chunk_size = opt->chunk_size * opt->cuda_num_threads;
 		} else {
 			aux.actual_chunk_size = opt->chunk_size * opt->n_threads;
 		}

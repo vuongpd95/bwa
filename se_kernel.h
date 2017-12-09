@@ -139,4 +139,5 @@ typedef struct {
 #define ks_lt_generic(a, b) ((a) < (b))
 
 #define _cuda_get_pac(pac, l) ((pac)[(l)>>2]>>((~(l)&3)<<1)&3)
+#define cuda_kv_init(v) ((v).n = (v).m = 0, (v).a = 0)
 #endif /* SE_KERNEL_H_ */

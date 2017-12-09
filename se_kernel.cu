@@ -36,11 +36,27 @@ void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
 {
 	if (code != cudaSuccess)
 	{
-		fprintf(stderr, "GPUassert: %s %s %d\n", \
+		fprintf(stderr, "[M::%s] GPUassert: %s %s %d\n", __func__, \
 			cudaGetErrorString(code), file, line);
 		if (abort) 
 			exit(code);
 	}
+}
+
+#define ONE_MBYTE (1024*1024)
+
+void print_mem_info()
+{
+	size_t free_byte;
+	size_t total_byte;
+	gpuErrchk(cudaMemGetInfo(&free_byte, &total_byte));
+
+	double free_db = (double)free_byte;
+	double total_db = (double)total_byte;
+	double used_db = total_db - free_db;
+
+	fprintf(stderr, "[M::%s] GPU memory usage: used = %.2f MB, free = %.2f MB, total = %.2f MB\n", \
+		__func__, used_db/ONE_MBYTE, free_db/ONE_MBYTE, total_db/ONE_MBYTE);
 }
 
 void cuda_mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, \
@@ -107,8 +123,7 @@ w2:
 	kt_for(opt->n_threads, worker2, &w, (opt->flag&MEM_F_PE)? n>>1 : n);
 	free(w.regs);
 	if (bwa_verbose >= 3)
-		fprintf(stderr, "[M::%s] Processed %d reads in %.3f CPU sec, \
-			%.3f real sec\n", __func__, n, cputime() - ctime, \
+		fprintf(stderr, "[M::%s] Processed %d reads in %.3f CPU sec, %.3f real sec\n", __func__, n, cputime() - ctime, \
 			realtime() - rtime);
 }
 
@@ -173,9 +188,6 @@ mem_alnreg_v sort_dedup_patch_core(const mem_opt_t *opt, const bntseq_t *bns, \
 	}
 	return (*regs);	
 }
-// Constant variables, tested, usable and can apply to all const needed 
-// variables.
-__constant__ mem_opt_t d_opt;
 /*
 __device__
 bseq2_t* get_bseq2_t(int n, int *l_seq, uint8_t *seq, int *i_seq, int i) {
@@ -260,7 +272,7 @@ mem_alnreg_v* cuda_mem_align1_core(mem_opt_t *opt, bntseq_t *bns, uint8_t *pac, 
 	int j;
 	regs = (mem_alnreg_v*)malloc(sizeof(mem_alnreg_v));
 	chn = get_mem_chain_v(n, f_chns, f_a, i_a, seeds, i_seeds, i);
-	// TODO: A lot to do here
+	cuda_kv_init(*regs);
 	for (j = 0; j < chn->n; ++j) {
 		mem_chain_t *p;
 		p = &(chn->a[j]);
@@ -271,11 +283,10 @@ mem_alnreg_v* cuda_mem_align1_core(mem_opt_t *opt, bntseq_t *bns, uint8_t *pac, 
 	return regs;
 }
 __global__ 
-void extension_kernel(int n, int *l_seq, uint8_t *seq, int *i_seq, \
+void extension_kernel(int n, mem_opt_t *opt, int *l_seq, uint8_t *seq, int *i_seq, \
 	flat_mem_chain_v *f_chns, flat_mem_chain_t *f_a, int *i_a, mem_seed_t *seeds, int *i_seeds, \
 	int64_t l_pac, int32_t n_seqs, bntann1_t *anns, uint8_t *pac, \
 	int *na, mem_alnreg_v **avs, flat_mem_alnreg_v *fav) {
-	// d_opt from __constant__
 	// opt, bns, pac, l_seq, (uint8_t*)seq, chns.a[...]
 	// return regs
 
@@ -294,20 +305,20 @@ void extension_kernel(int n, int *l_seq, uint8_t *seq, int *i_seq, \
 	int thread_idx, i, cuda_num_threads;
 	thread_idx = blockIdx.x;
 	i = thread_idx;
-	cuda_num_threads = d_opt.cuda_num_threads;
-	if(d_opt.flag & MEM_F_PE) {
+	cuda_num_threads = opt->cuda_num_threads;
+	if(opt->flag & MEM_F_PE) {
 		int alt_n;
 		alt_n = n >> 1;
 		for(;;) {
 			if (i >= alt_n) break;
-			avs[i<<1|0] = cuda_mem_align1_core(&d_opt, &bns, pac, \
+			avs[i<<1|0] = cuda_mem_align1_core(opt, &bns, pac, \
 				l_seq[i<<1|0], &seq[i_seq[i<<1|0]], \
 				f_chns, f_a, i_a, seeds, i_seeds, i<<1|0, n);
 			atomicAdd(na, avs[i<<1|0]->n);
 			fav[i<<1|0].n = avs[i<<1|0]->n;
 			fav[i<<1|0].m = avs[i<<1|0]->m;
 
-			avs[i<<1|1] = cuda_mem_align1_core(&d_opt, &bns, pac, \
+			avs[i<<1|1] = cuda_mem_align1_core(opt, &bns, pac, \
 				l_seq[i<<1|1], &seq[i_seq[i<<1|1]], \
 				f_chns, f_a, i_a, seeds, i_seeds, i<<1|1, n);
 			atomicAdd(na, avs[i<<1|1]->n);
@@ -319,21 +330,22 @@ void extension_kernel(int n, int *l_seq, uint8_t *seq, int *i_seq, \
 	} else {
 		for(;;) {
 			if (i >= n) break;
-			avs[i] = cuda_mem_align1_core(&d_opt, &bns, pac, \
+			avs[i] = cuda_mem_align1_core(opt, &bns, pac, \
 				l_seq[i], &seq[i_seq[i]], f_chns, f_a, i_a, \
 				seeds, i_seeds, i, n);
 			atomicAdd(na, avs[i]->n);
 			fav[i].n = avs[i]->n;
 			fav[i].m = avs[i]->m;
+
 			i += cuda_num_threads;
 		}
 	}
 }
 
 __global__ 
-void ret_kernel(int n, mem_alnreg_v **avs, int* av_ia, mem_alnreg_t *av_a) {
+void ret_kernel(int n, mem_opt_t *opt, mem_alnreg_v **avs, int* av_ia, mem_alnreg_t *av_a) {
 	int thread_idx, i, j, size, cuda_num_threads;
-	cuda_num_threads = d_opt.cuda_num_threads;
+	cuda_num_threads = opt->cuda_num_threads;
 	thread_idx = blockIdx.x;
 	i = thread_idx;
 	for(;;) {
@@ -366,12 +378,12 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 
 	mem_chain_v *chns; // used to replace w->chns
 	bseq1_t *seqs; // used to replace w->seqs
+	mem_opt_t *d_opt;
 	flat_mem_chain_v *f_chns, *df_chns; // flat version of chns (mem_chain_v)
 	flat_mem_chain_t *f_a, *df_a; // flat version of a (mem_chain_t)
 	int *i_a, *di_a; // starting index of different chns's mem_chain_t
 	mem_seed_t *seeds, *d_seeds; // contains all seeds (mem_seed_t)
 	int *i_seeds, *di_seeds; // starting index of different chns's seeds. (mem_seed_t)
-
 	uint8_t *d_pac; // Just device variable of the host's pac variable
 
 	n_a = 0; 
@@ -446,8 +458,8 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 		i_a[i] = acc_a;
 		acc_a += chns[i].n;
 	}
-
-	gpuErrchk(cudaMemcpyToSymbol(&d_opt, opt, sizeof(mem_opt_t)));
+	
+	gpuErrchk(cudaMalloc(&d_opt, sizeof(mem_opt_t)));
 
 	gpuErrchk(cudaMalloc(&d_anns, bns->n_seqs * sizeof(bntann1_t)));
 	gpuErrchk(cudaMalloc(&dl_seq, n * sizeof(int)));
@@ -462,6 +474,9 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 	gpuErrchk(cudaMalloc(&di_seeds, n * sizeof(int)));
 
 	gpuErrchk(cudaMalloc(&d_pac, (bns->l_pac/4+1) * sizeof(uint8_t)));
+
+	gpuErrchk(cudaMemcpy(d_opt, opt, sizeof(mem_opt_t), \
+			cudaMemcpyHostToDevice));
 
 	gpuErrchk(cudaMemcpy(d_anns, bns->anns, bns->n_seqs * sizeof(bntann1_t), \
 			cudaMemcpyHostToDevice));
@@ -505,14 +520,19 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 	gpuErrchk(cudaMalloc(&d_fav, n * sizeof(flat_mem_alnreg_v)));
 
 	gpuErrchk(cudaMalloc(&d_av_na, sizeof(int)));
+	gpuErrchk(cudaMemset(d_av_na, 0, sizeof(int)));
+
 	gpuErrchk(cudaMalloc((void**)&d_avs, n * sizeof(mem_alnreg_v*)));
 
-	extension_kernel<<<num_block, thread_per_block>>>(n, dl_seq, d_seq, di_seq, \
+	extension_kernel<<<num_block, thread_per_block>>>(n, d_opt, dl_seq, d_seq, di_seq, \
 		df_chns, df_a, di_a, seeds, di_seeds, bns->l_pac, bns->n_seqs, d_anns, \
 		d_pac, d_av_na, d_avs, d_fav);
 	gpuErrchk(cudaPeekAtLastError());
 
-	gpuErrchk(cudaMemcpy(&h_av_na, d_av_na, sizeof(int), cudaMemcpyDeviceToHost));
+	print_mem_info();
+
+	gpuErrchk(cudaMemcpy(&h_av_na, d_av_na, sizeof(int), \
+			cudaMemcpyDeviceToHost));
 	gpuErrchk(cudaMemcpy(h_fav, d_fav, n * sizeof(flat_mem_alnreg_v), \
 			cudaMemcpyDeviceToHost));
 	
@@ -525,14 +545,14 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 		h_av_ia[i] = acc_av_a;
 		acc_av_a += h_fav[i].n;	
 	}
-	
+
 	gpuErrchk(cudaMalloc(&d_av_ia, n * sizeof(int)));
 	gpuErrchk(cudaMalloc(&d_av_a, h_av_na * sizeof(mem_alnreg_t)));
 
 	gpuErrchk(cudaMemcpy(d_av_ia, h_av_ia, n * sizeof(int), \
 			cudaMemcpyHostToDevice));
 	
-	ret_kernel<<<num_block, thread_per_block>>>(n, d_avs, d_av_ia, d_av_a);
+	ret_kernel<<<num_block, thread_per_block>>>(n, d_opt, d_avs, d_av_ia, d_av_a);
 
 	gpuErrchk(cudaPeekAtLastError());
 
@@ -547,6 +567,8 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 		memcpy(w->regs[i].a, &h_av_a[h_av_ia[i]], h_fav[i].n * sizeof(mem_alnreg_t));
 	}
 	//
+	cudaFree(d_opt);
+	cudaFree(d_pac);
 	cudaFree(d_anns);
 	cudaFree(dl_seq);
 	cudaFree(d_seq);
@@ -564,7 +586,7 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 	free(i_seq);
 	free(i_a);
 	free(i_seeds);
-	
+
 	cudaFree(d_avs);
 	cudaFree(d_av_na);
 	cudaFree(d_av_ia); 
@@ -578,7 +600,7 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 
 /* Functions that mainly the same with original C source */
 __device__ 
-void *cuda_realloc(void * ptr, size_t old_size, size_t new_size)
+void *cuda_realloc(void *ptr, size_t old_size, size_t new_size)
 {
 	void *cuda_new;
 
