@@ -14,6 +14,10 @@
 #include "kseq.h"
 #include "se_kernel.h"
 
+void cuda_mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, \
+	const bntseq_t *bns, const uint8_t *pac, int64_t n_processed, int n, \
+	bseq1_t *seqs, const mem_pestat_t *pes0);
+
 extern unsigned char nst_nt4_table[256];
 
 void kt_pipeline(int n_threads, void *(*func)(void*, int, void*), void *shared_data, int n_steps);
@@ -53,19 +57,19 @@ static void *process(void *shared, int step, void *_data)
 				fprintf(stderr, "[M::%s] %d single-end sequences; %d paired-end sequences\n", __func__, n_seq[0], n_seq[1]);
 			if (n_seq[0]) {
 				tmp_opt.flag &= ~MEM_F_PE;
-				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, n_seq[0], seq[0], 0);
+				cuda_mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, n_seq[0], seq[0], 0);
 				for (i = 0; i < n_seq[0]; ++i)
 					data->seqs[seq[0][i].id].sam = seq[0][i].sam;
 			}
 			if (n_seq[1]) {
 				tmp_opt.flag |= MEM_F_PE;
-				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed + n_seq[0], n_seq[1], seq[1], \
+				cuda_mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed + n_seq[0], n_seq[1], seq[1], \
 						aux->pes0);
 				for (i = 0; i < n_seq[1]; ++i)
 					data->seqs[seq[1][i].id].sam = seq[1][i].sam;
 			}
 			free(seq[0]); free(seq[1]);
-		} else mem_process_seqs(opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, data->n_seqs, data->seqs, aux->pes0);
+		} else cuda_mem_process_seqs(opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, data->n_seqs, data->seqs, aux->pes0);
 		aux->n_processed += data->n_seqs;
 		return data;
 	} else if (step == 2) {
@@ -235,6 +239,7 @@ int main_mem(int argc, char *argv[])
 		fprintf(stderr, "       -m INT        perform at most INT rounds of mate rescues for each read [%d]\n", opt->max_matesw);
 		fprintf(stderr, "       -S            skip mate rescue\n");
 		fprintf(stderr, "       -P            skip pairing; mate rescue performed unless -S also in use\n");
+		fprintf(stderr, "       -g INT        choose to execute seed extension in CUDA, specify the number of used GPU thread.\n");
 		fprintf(stderr, "\nScoring options:\n\n");
 		fprintf(stderr, "       -A INT        score for a sequence match, which scales options -TdBOELU unless overridden [%d]\n", opt->a);
 		fprintf(stderr, "       -B INT        penalty for a mismatch [%d]\n", opt->b);
@@ -267,7 +272,6 @@ int main_mem(int argc, char *argv[])
 		fprintf(stderr, "                     specify the mean, standard deviation (10%% of the mean if absent), max\n");
 		fprintf(stderr, "                     (4 sigma from the mean if absent) and min of the insert size distribution.\n");
 		fprintf(stderr, "                     FR orientation only. [inferred]\n");
-		fprintf(stderr, "       -g INT        choose to execute seed extension in CUDA, specify the number of used GPU thread.\n");
 		fprintf(stderr, "\n");
 		fprintf(stderr, "Note: Please read the man page for detailed description of the command line and options.\n");
 		fprintf(stderr, "\n");
@@ -340,7 +344,11 @@ int main_mem(int argc, char *argv[])
 			aux.actual_chunk_size = fixed_chunk_size;
 		}
 	} else {
-		aux.actual_chunk_size = opt->chunk_size * opt->n_threads;
+		if(opt->cuda_num_threads > 0) {
+			aux.actual_chunk_size = opt->cuda_num_threads;
+		} else {
+			aux.actual_chunk_size = opt->chunk_size * opt->n_threads;
+		}
 	}
 	kt_pipeline(no_mt_io? 1 : 2, process, &aux, 3);
 	free(hdr_line);

@@ -221,9 +221,6 @@ void bns_destroy(bntseq_t *bns)
 	}
 }
 
-#define _set_pac(pac, l, c) ((pac)[(l)>>2] |= (c)<<((~(l)&3)<<1))
-#define _get_pac(pac, l) ((pac)[(l)>>2]>>((~(l)&3)<<1)&3)
-
 static uint8_t *add1(const kseq_t *seq, bntseq_t *bns, uint8_t *pac, int64_t *m_pac, int *m_seqs, int *m_holes, bntamb1_t **q)
 {
 	bntann1_t *p;

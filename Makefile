@@ -223,7 +223,7 @@ depend:
 
 # DO NOT DELETE THIS LINE -- make depend depends on it.
 
-se_kernel.o: se_kernel.h bwamem.h bntseq.h utils.h
+se_kernel.o: se_kernel.h bwamem.h utils.h
 bntseq.o: bntseq.h utils.h kseq.h malloc_wrap.h khash.h
 bwa.o: bntseq.h bwa.h bwt.h ksw.h utils.h kstring.h malloc_wrap.h kvec.h
 bwa.o: kseq.h

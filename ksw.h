@@ -18,6 +18,10 @@ typedef struct {
 	int tb, qb; // target start and query start
 } kswr_t;
 
+typedef struct {
+	int32_t h, e;
+} eh_t;
+
 #ifdef __cplusplus
 extern "C" {
 #endif

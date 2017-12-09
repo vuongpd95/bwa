@@ -38,6 +38,9 @@
 typedef uint8_t ubyte_t;
 #endif
 
+#define _set_pac(pac, l, c) ((pac)[(l)>>2] |= (c)<<((~(l)&3)<<1))
+#define _get_pac(pac, l) ((pac)[(l)>>2]>>((~(l)&3)<<1)&3)
+
 typedef struct {
 	int64_t offset;
 	int32_t len;
