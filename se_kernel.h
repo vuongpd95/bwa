@@ -11,6 +11,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <stdint.h>
+#include <inttypes.h>
 
 #include "bwamem.h"
 // #include "bntseq.h"
