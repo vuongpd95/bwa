@@ -210,6 +210,17 @@ void free_bseq2_t(bseq2_t **p) {
 	free(*p);
 }
 */
+__device__ int cnt = 0;
+__device__
+void check_passed(int i) {
+	int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (i == thread_idx) {
+		cnt = cnt + 1;
+		printf("\nPass gate: %d\n", cnt);
+		if(cnt == 4) cnt = 0;
+	}
+}
+
 __device__ 
 mem_chain_v* get_mem_chain_v(int n, flat_mem_chain_v *f_chns, \
 		flat_mem_chain_t *f_a, int *i_a, mem_seed_t *seeds, \
@@ -228,7 +239,6 @@ mem_chain_v* get_mem_chain_v(int n, flat_mem_chain_v *f_chns, \
 	ret->n = f_chns[i].n;
 	ret->m = f_chns[i].m;
 	ret->a = (mem_chain_t*)malloc(ret->n * sizeof(mem_chain_t));
-	assert(ret->a != NULL);
 	for(j = 0; j < ret->n; j++) {
 		ret->a[j].n = f_a[first_a + j].n;
 		ret->a[j].m = f_a[first_a + j].m;
@@ -240,15 +250,15 @@ mem_chain_v* get_mem_chain_v(int n, flat_mem_chain_v *f_chns, \
 		ret->a[j].frac_rep = f_a[first_a + j].frac_rep;
 		ret->a[j].pos = f_a[first_a + j].pos;
 		ret->a[j].seeds = (mem_seed_t*)malloc(ret->a[j].n * sizeof(mem_seed_t));
-		assert(ret->a[j].seeds != NULL);
 		/*for(k = 0; k < ret->a[j].n; k++) {
-			ret->a[j].seeds[k].rbeg = seeds[first_seed + acc_seeds + k].rbeg;
-			ret->a[j].seeds[k].qbeg = seeds[first_seed + acc_seeds + k].qbeg;
-			ret->a[j].seeds[k].len = seeds[first_seed + acc_seeds + k].len;
-			ret->a[j].seeds[k].score = seeds[first_seed + acc_seeds + k].score;
+				ret->a[j].seeds[k].rbeg = seeds[first_seed + acc_seeds + k].rbeg;
+				ret->a[j].seeds[k].qbeg = seeds[first_seed + acc_seeds + k].qbeg;
+				ret->a[j].seeds[k].len = seeds[first_seed + acc_seeds + k].len;
+				ret->a[j].seeds[k].score = seeds[first_seed + acc_seeds + k].score;
 		}*/
-		memcpy(ret->a[j].seeds, &seeds[first_seed + acc_seeds], \
-			ret->a[j].n * sizeof(mem_seed_t));
+		if (ret->a[j].seeds != NULL)
+			memcpy(ret->a[j].seeds, &seeds[first_seed + acc_seeds], \
+					ret->a[j].n * sizeof(mem_seed_t));
 		acc_seeds += ret->a[j].n;
 	}
 	return ret;
@@ -281,6 +291,8 @@ mem_alnreg_v* cuda_mem_align1_core(mem_opt_t *opt, bntseq_t *bns, uint8_t *pac, 
 	chn = get_mem_chain_v(n, f_chns, f_a, i_a, seeds, i_seeds, i);
 	cuda_kv_init(*regs);
 	for (j = 0; j < chn->n; ++j) {
+		int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
+		if (cnt == 94) printf("%d\n", thread_idx);
 		mem_chain_t *p;
 		p = &(chn->a[j]);
 		cuda_mem_chain2aln(opt, bns, pac, l_seq, seq, p, regs);
@@ -289,6 +301,7 @@ mem_alnreg_v* cuda_mem_align1_core(mem_opt_t *opt, bntseq_t *bns, uint8_t *pac, 
 	
 	return regs;
 }
+
 __global__ 
 void extension_kernel(int n, mem_opt_t *opt, int *l_seq, uint8_t *seq, int *i_seq, \
 	flat_mem_chain_v *f_chns, flat_mem_chain_t *f_a, int *i_a, mem_seed_t *seeds, int *i_seeds, \
@@ -308,11 +321,17 @@ void extension_kernel(int n, mem_opt_t *opt, int *l_seq, uint8_t *seq, int *i_se
 	bns.l_pac = l_pac;
 	bns.n_seqs = n_seqs;
 	bns.anns = anns;
-	
-	int thread_idx, i, cuda_num_threads;
-	thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
-	i = thread_idx;
-	cuda_num_threads = opt->cuda_num_threads;
+	int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
+	/*if (thread_idx == 0 && cnt == 93) {
+		for(int j = 0; j < n; j++) {
+			printf("f_chns[%d]: n = %lu, m = %lu.\n", j, f_chns[j].n, f_chns[j].m);
+			for(int k = 0; k < f_chns[j].n; k++) {
+				printf("	a[%d]: n = %d, m = %d.\n", k, f_a[i_a[j] + k].n, f_a[i_a[j] + k].m);
+			}
+		}
+	}*/
+	int i = thread_idx;
+	int cuda_num_threads = opt->cuda_num_threads;
 	if(opt->flag & MEM_F_PE) {
 		int alt_n;
 		alt_n = n >> 1;
@@ -343,8 +362,8 @@ void extension_kernel(int n, mem_opt_t *opt, int *l_seq, uint8_t *seq, int *i_se
 			atomicAdd(na, avs[i]->n);
 			fav[i].n = avs[i]->n;
 			fav[i].m = avs[i]->m;
-
 			i += cuda_num_threads;
+			if (thread_idx == 0) cnt++;
 		}
 	}
 }
@@ -545,6 +564,7 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 
 	gpuErrchk(cudaMemcpy(h_av_na, d_av_na, sizeof(int), \
 			cudaMemcpyDeviceToHost));
+
 	gpuErrchk(cudaMemcpy(h_fav, d_fav, n * sizeof(flat_mem_alnreg_v), \
 			cudaMemcpyDeviceToHost));
 	
@@ -689,7 +709,6 @@ uint8_t *cuda_bns_get_seq(int64_t l_pac, const uint8_t *pac, int64_t beg, int64_
 		int64_t k, l = 0;
 		*len = end - beg;
 		seq = (uint8_t*)malloc(end - beg);
-		assert(seq != NULL);
 		if (beg >= l_pac) { // reverse strand
 			int64_t beg_f = (l_pac<<1) - 1 - end;
 			int64_t end_f = (l_pac<<1) - 1 - beg;
@@ -749,7 +768,6 @@ int cuda_ksw_extend2(int qlen, const uint8_t *query, int tlen, const uint8_t *ta
 	assert(h0 > 0);
 	// allocate memory
 	qp = (int8_t*)malloc(qlen * m);
-	assert(qp != NULL);
 	eh = (eh_t*)cuda_calloc(qlen + 1, 8);
 	// generate the query profile
 	for (k = i = 0; k < m; ++k) {
@@ -880,7 +898,6 @@ void cuda_mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t
 	rseq = cuda_bns_fetch_seq(bns, pac, &rmax[0], c->seeds[0].rbeg, &rmax[1], &rid);
 	assert(c->rid == rid);
 	srt = (uint64_t*)malloc(c->n * 8);
-	assert(srt != NULL);
 	for (i = 0; i < c->n; ++i)
 		srt[i] = (uint64_t)c->seeds[i].score<<32 | i;
 	cuda_ks_introsort_64(c->n, srt);
@@ -934,11 +951,9 @@ void cuda_mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t
 			uint8_t *rs, *qs;
 			int qle, tle, gtle, gscore;
 			qs = (uint8_t*)malloc(s->qbeg);
-			assert(qs != NULL);
 			for (i = 0; i < s->qbeg; ++i) qs[i] = query[s->qbeg - 1 - i];
 			tmp = s->rbeg - rmax[0];
 			rs = (uint8_t*)malloc(tmp);
-			assert(rs != NULL);
 			for (i = 0; i < tmp; ++i) rs[i] = rseq[tmp - 1 - i];
 			for (i = 0; i < MAX_BAND_TRY; ++i) {
 				int prev = a->score;
