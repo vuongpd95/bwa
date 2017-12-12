@@ -238,10 +238,8 @@ mem_chain_v* get_mem_chain_v(int n, flat_mem_chain_v *f_chns, \
 	assert(ret != NULL);
 	ret->n = f_chns[i].n;
 	ret->m = f_chns[i].m;
-	do {
-		ret->a = (mem_chain_t*)malloc(ret->n * sizeof(mem_chain_t));
-	} while(ret->n != 0 && ret->a == NULL);
-	// assert(!(ret->n != 0 && ret->a == NULL));
+	ret->a = (mem_chain_t*)malloc(ret->n * sizeof(mem_chain_t));
+	assert(!(ret->n != 0 && ret->a == NULL));
 	for(j = 0; j < ret->n; j++) {
 		ret->a[j].n = f_a[first_a + j].n;
 		ret->a[j].m = f_a[first_a + j].m;
@@ -252,10 +250,8 @@ mem_chain_v* get_mem_chain_v(int n, flat_mem_chain_v *f_chns, \
 		ret->a[j].is_alt = f_a[first_a + j].is_alt;
 		ret->a[j].frac_rep = f_a[first_a + j].frac_rep;
 		ret->a[j].pos = f_a[first_a + j].pos;
-		do {
-			ret->a[j].seeds = (mem_seed_t*)malloc(ret->a[j].n * sizeof(mem_seed_t));
-		} while(ret->a[j].n != 0 && ret->a[j].seeds == NULL);
-		// assert(!(ret->a[j].n != 0 && ret->a[j].seeds == NULL));
+		ret->a[j].seeds = (mem_seed_t*)malloc(ret->a[j].n * sizeof(mem_seed_t));
+		assert(!(ret->a[j].n != 0 && ret->a[j].seeds == NULL));
 		/*for(k = 0; k < ret->a[j].n; k++) {
 				ret->a[j].seeds[k].rbeg = seeds[first_seed + acc_seeds + k].rbeg;
 				ret->a[j].seeds[k].qbeg = seeds[first_seed + acc_seeds + k].qbeg;
@@ -399,7 +395,7 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 	// Use opt, pac ===============> d_opt, d_pac
 	// Use bns ====================> l_pac, d_anns[...]
 	// Use pac[l_pac/4+1]
-	fprintf(stderr, "[M::%s] bns->l_pac = %" PRId64 "\n", __func__, bns->l_pac);
+	// cudaDeviceSetLimit(cudaLimitMallocHeapSize, 1024 * ONE_MBYTE);
 	int i, j, k;
 	int n_a, n_seeds;
 
@@ -491,6 +487,8 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 		acc_a += chns[i].n;
 	}
 	
+	gpuErrchk(cudaDeviceSetLimit(cudaLimitMallocHeapSize, 1024 * ONE_MBYTE));
+
 	gpuErrchk(cudaMalloc(&d_opt, sizeof(mem_opt_t)));
 
 	gpuErrchk(cudaMalloc(&d_anns, bns->n_seqs * sizeof(bntann1_t)));
@@ -560,7 +558,6 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 	// print_seq(n, l_seq);
 	// print_chns(n, f_chns, f_a, i_a);
 	// print_bns_pac(bns->l_pac, bns->n_seqs);
-
 	extension_kernel<<<num_block, thread_per_block>>>(n, d_opt, dl_seq, d_seq, di_seq, \
 		df_chns, df_a, di_a, d_seeds, di_seeds, bns->l_pac, bns->n_seqs, d_anns, \
 		d_pac, d_av_na, d_avs, d_fav);
@@ -636,6 +633,7 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 	free(h_fav);
 	free(h_av_a);
  	/* */
+	gpuErrchk(cudaDeviceReset());
 }
 
 /* Functions that mainly the same with original C source */
@@ -683,9 +681,8 @@ mem_alnreg_t* cuda_kv_pushp_v2 (mem_alnreg_v av) {
 	mem_alnreg_t *tmp;
 	if (av.n == av.m) {
 		av.m = (av.m)?(av.m << 1):2;
-		do {
-			tmp = (mem_alnreg_t*)cuda_realloc(av.a, av.n * sizeof(mem_alnreg_t), sizeof(mem_alnreg_t) * av.m);
-		} while (tmp == NULL);
+		tmp = (mem_alnreg_t*)cuda_realloc(av.a, av.n * sizeof(mem_alnreg_t), sizeof(mem_alnreg_t) * av.m);
+		assert(tmp != NULL);
 		av.a = tmp;
 	} else {
 		ret = 0;
@@ -730,10 +727,8 @@ uint8_t *cuda_bns_get_seq(int64_t l_pac, const uint8_t *pac, int64_t beg, int64_
 	if (beg >= l_pac || end <= l_pac) {
 		int64_t k, l = 0;
 		*len = end - beg;
-		do {
-			seq = (uint8_t*)malloc(end - beg);
-		} while((end - beg) != 0 && seq == NULL);
-		// assert(!((end - beg) != 0 && seq == NULL));
+		seq = (uint8_t*)malloc(end - beg);;
+		assert(!((end - beg) != 0 && seq == NULL));
 		if (beg >= l_pac) { // reverse strand
 			int64_t beg_f = (l_pac<<1) - 1 - end;
 			int64_t end_f = (l_pac<<1) - 1 - beg;
@@ -792,14 +787,10 @@ int cuda_ksw_extend2(int qlen, const uint8_t *query, int tlen, const uint8_t *ta
 	int i, j, k, oe_del = o_del + e_del, oe_ins = o_ins + e_ins, beg, end, max, max_i, max_j, max_ins, max_del, max_ie, gscore, max_off;
 	assert(h0 > 0);
 	// allocate memory
-	do {
-		qp = (int8_t*)malloc(qlen * m);
-	} while((qlen * m) != 0 && qp == NULL);
-	// assert(!((qlen * m) != 0 && qp == NULL));
-	do {
-		eh = (eh_t*)cuda_calloc(qlen + 1, 8);
-	} while ((qlen + 1) != 0 && eh == NULL);
-	// assert(!((qlen + 1) != 0 && eh == NULL));
+	qp = (int8_t*)malloc(qlen * m);
+	assert(!((qlen * m) != 0 && qp == NULL));
+	eh = (eh_t*)cuda_calloc(qlen + 1, 8);
+	assert(!((qlen + 1) != 0 && eh == NULL));
 	// generate the query profile
 	for (k = i = 0; k < m; ++k) {
 		const int8_t *p = &mat[k * m];
@@ -928,10 +919,8 @@ void cuda_mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t
 	// retrieve the reference sequence
 	rseq = cuda_bns_fetch_seq(bns, pac, &rmax[0], c->seeds[0].rbeg, &rmax[1], &rid);
 	assert(c->rid == rid);
-	do {
-		srt = (uint64_t*)malloc(c->n * 8);
-	} while (c->n != 0 && srt == NULL);
-	// assert(!(c->n != 0 && srt == NULL));
+	srt = (uint64_t*)malloc(c->n * 8);
+	assert(!(c->n != 0 && srt == NULL));
 	for (i = 0; i < c->n; ++i)
 		srt[i] = (uint64_t)c->seeds[i].score<<32 | i;
 	cuda_ks_introsort_64(c->n, srt);
@@ -984,16 +973,12 @@ void cuda_mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t
 		if (s->qbeg) { // left extension
 			uint8_t *rs, *qs;
 			int qle, tle, gtle, gscore;
-			do {
-				qs = (uint8_t*)malloc(s->qbeg);
-			} while (s->qbeg != 0 && qs == NULL);
-			// assert(!(s->qbeg != 0 && qs == NULL));
+			qs = (uint8_t*)malloc(s->qbeg);
+			assert(!(s->qbeg != 0 && qs == NULL));
 			for (i = 0; i < s->qbeg; ++i) qs[i] = query[s->qbeg - 1 - i];
 			tmp = s->rbeg - rmax[0];
-			do {
-				rs = (uint8_t*)malloc(tmp);
-			} while (tmp != 0 && rs == NULL);
-			// assert(!(tmp != 0 && rs == NULL));
+			rs = (uint8_t*)malloc(tmp);
+			assert(!(tmp != 0 && rs == NULL));
 			for (i = 0; i < tmp; ++i) rs[i] = rseq[tmp - 1 - i];
 			for (i = 0; i < MAX_BAND_TRY; ++i) {
 				int prev = a->score;
