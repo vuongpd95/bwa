@@ -47,8 +47,6 @@ void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
 	}
 }
 
-#define ONE_MBYTE (1024*1024)
-
 void print_mem_info()
 {
 	size_t free_byte;
@@ -70,9 +68,8 @@ void cuda_mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, \
 	worker_t w;
 	mem_pestat_t pes[4];
 	double ctime, rtime;
-	int i;
 	ctime = cputime(); rtime = realtime();
-
+	int i;
 	w.regs = (mem_alnreg_v*)malloc(n * sizeof(mem_alnreg_v));
 	w.chns = (mem_chain_v*)malloc(n * sizeof(mem_chain_v));
 	w.opt = opt;
@@ -90,7 +87,7 @@ void cuda_mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, \
 		// Chaining mem
 		kt_for(opt->n_threads, chn_mem, &w, \
 			(opt->flag & MEM_F_PE)? n >> 1 : n);
-		
+
 		// Perform seed extension
 		cuda_seed_extension(opt, bns, pac, n, &w);		
 
@@ -210,16 +207,6 @@ void free_bseq2_t(bseq2_t **p) {
 	free(*p);
 }
 */
-__device__ int cnt = 0;
-__device__
-void check_passed(int i) {
-	int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
-	if (i == thread_idx) {
-		cnt = cnt + 1;
-		printf("\nPass gate: %d\n", cnt);
-		if(cnt == 4) cnt = 0;
-	}
-}
 
 __device__ 
 mem_chain_v* get_mem_chain_v(int n, flat_mem_chain_v *f_chns, \
@@ -365,7 +352,6 @@ void extension_kernel(int n, mem_opt_t *opt, int *l_seq, uint8_t *seq, int *i_se
 			fav[i].n = avs[i]->n;
 			fav[i].m = avs[i]->m;
 			i += cuda_num_threads;
-			if (thread_idx == 0) cnt++;
 		}
 	}
 }
@@ -486,7 +472,6 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 		i_a[i] = acc_a;
 		acc_a += chns[i].n;
 	}
-	
 	gpuErrchk(cudaDeviceSetLimit(cudaLimitMallocHeapSize, 1024 * ONE_MBYTE));
 
 	gpuErrchk(cudaMalloc(&d_opt, sizeof(mem_opt_t)));
@@ -530,10 +515,6 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 				cudaMemcpyHostToDevice));
 	gpuErrchk(cudaMemcpy(d_pac, pac, (bns->l_pac/4+1) * sizeof(uint8_t), \
 				cudaMemcpyHostToDevice));
-
-	int num_block;
-	dim3 thread_per_block(32);
-	num_block = opt->cuda_num_threads/thread_per_block.x;
 	
 	mem_alnreg_v **d_avs; // Used to maintain connections between kernels
 	int *h_av_na, *d_av_na; // Varibles which hold total number of mem_alnreg_t
@@ -558,6 +539,17 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 	// print_seq(n, l_seq);
 	// print_chns(n, f_chns, f_a, i_a);
 	// print_bns_pac(bns->l_pac, bns->n_seqs);
+	int num_block;
+	int t_block;
+	if (opt->cuda_num_threads > THREAD_LIMIT_PER_BLOCK) {
+		t_block = THREAD_LIMIT_PER_BLOCK;
+		num_block = ceil(opt->cuda_num_threads / t_block);
+	} else {
+		t_block = ceil(opt->cuda_num_threads / WARP_SIZE) * WARP_SIZE;
+		num_block = 1;
+	}
+	dim3 thread_per_block(t_block);
+
 	extension_kernel<<<num_block, thread_per_block>>>(n, d_opt, dl_seq, d_seq, di_seq, \
 		df_chns, df_a, di_a, d_seeds, di_seeds, bns->l_pac, bns->n_seqs, d_anns, \
 		d_pac, d_av_na, d_avs, d_fav);
@@ -588,7 +580,6 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 			cudaMemcpyHostToDevice));
 
 	ret_kernel<<<num_block, thread_per_block>>>(n, d_opt, d_avs, d_av_ia, d_av_a);
-	
 	gpuErrchk(cudaPeekAtLastError());
 
 	gpuErrchk(cudaMemcpy(h_av_a, d_av_a, *h_av_na * sizeof(mem_alnreg_t), \
@@ -601,7 +592,7 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 		w->regs[i].a = (mem_alnreg_t*)malloc(h_fav[i].n * sizeof(mem_alnreg_t));
 		memcpy(w->regs[i].a, &h_av_a[h_av_ia[i]], h_fav[i].n * sizeof(mem_alnreg_t));
 	}
-	//
+	/*
 	cudaFree(d_opt);
 	cudaFree(d_pac);
 	cudaFree(d_anns);

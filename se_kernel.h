@@ -12,6 +12,7 @@
 #include <cuda_runtime.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <math.h>
 
 #include "bwamem.h"
 // #include "bntseq.h"
@@ -51,7 +52,12 @@ typedef struct {
 #define gpuErrchk(ans) { \
 	gpuAssert((ans), __FILE__, __LINE__); \
 }
+
 #define MAX_BAND_TRY  2
+#define THREAD_LIMIT_PER_BLOCK 512
+#define WARP_SIZE 32
+#define ONE_MBYTE (1024*1024)
+#define FIXED_HEAP 1024
 
 #define CUDA_KSORT_INIT(name, type_t, __sort_lt)						\
 	__device__ static void __cuda_ks_insertsort_##name(type_t *s, type_t *t)		\
