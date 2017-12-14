@@ -117,7 +117,7 @@ int main_mem(int argc, char *argv[])
 
 	aux.opt = opt = mem_opt_init();
 	memset(&opt0, 0, sizeof(mem_opt_t));
-	while ((c = getopt(argc, argv, "51paMCSPVYjk:c:v:s:r:t:R:A:B:O:E:U:w:L:d:T:Q:D:m:I:N:o:f:W:x:G:h:y:K:X:g:H:")) >= 0) {
+	while ((c = getopt(argc, argv, "51paMCSPVYjgk:c:v:s:r:t:R:A:B:O:E:U:w:L:d:T:Q:D:m:I:N:o:f:W:x:G:h:y:K:X:H:")) >= 0) {
 		if (c == 'k') opt->min_seed_len = atoi(optarg), opt0.min_seed_len = 1;
 		else if (c == '1') no_mt_io = 1;
 		else if (c == 'x') mode = optarg;
@@ -151,7 +151,7 @@ int main_mem(int argc, char *argv[])
 		else if (c == 'C') aux.copy_comment = 1;
 		else if (c == 'K') fixed_chunk_size = atoi(optarg);
 		else if (c == 'X') opt->mask_level = atof(optarg);
-		else if (c == 'g') opt->cuda_num_threads = atoi(optarg);
+		else if (c == 'g') opt->cuda_se_enabled = true;
 		else if (c == 'h') {
 			opt0.max_XA_hits = opt0.max_XA_hits_alt = 1;
 			opt->max_XA_hits = opt->max_XA_hits_alt = strtol(optarg, &p, 10);
@@ -239,7 +239,7 @@ int main_mem(int argc, char *argv[])
 		fprintf(stderr, "       -m INT        perform at most INT rounds of mate rescues for each read [%d]\n", opt->max_matesw);
 		fprintf(stderr, "       -S            skip mate rescue\n");
 		fprintf(stderr, "       -P            skip pairing; mate rescue performed unless -S also in use\n");
-		fprintf(stderr, "       -g INT        choose to execute seed extension in CUDA, specify the number of used GPU thread.\n");
+		fprintf(stderr, "       -g 		      choose to execute seed extension using CUDA.\n");
 		fprintf(stderr, "\nScoring options:\n\n");
 		fprintf(stderr, "       -A INT        score for a sequence match, which scales options -TdBOELU unless overridden [%d]\n", opt->a);
 		fprintf(stderr, "       -B INT        penalty for a mismatch [%d]\n", opt->b);
@@ -337,19 +337,9 @@ int main_mem(int argc, char *argv[])
 		}
 	}
 	bwa_print_sam_hdr(aux.idx->bns, hdr_line);
-	if(fixed_chunk_size > 0) {
-		if(opt->cuda_num_threads > 0) {
-			aux.actual_chunk_size = fixed_chunk_size * opt->cuda_num_threads;
-		} else {
-			aux.actual_chunk_size = fixed_chunk_size;
-		}
-	} else {
-		if(opt->cuda_num_threads > 0) {
-			aux.actual_chunk_size = opt->chunk_size * opt->cuda_num_threads;
-		} else {
-			aux.actual_chunk_size = opt->chunk_size * opt->n_threads;
-		}
-	}
+	if (opt->cuda_se_enabled) {
+		aux.actual_chunk_size = N * LEN_SEQ;
+	} else aux.actual_chunk_size = fixed_chunk_size > 0? fixed_chunk_size : opt->chunk_size * opt->n_threads;
 	kt_pipeline(no_mt_io? 1 : 2, process, &aux, 3);
 	free(hdr_line);
 	free(opt);

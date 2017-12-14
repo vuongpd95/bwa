@@ -5,6 +5,7 @@
 #include "bntseq.h"
 #include "bwa.h"
 #include "kseq.h"
+#include <stdbool.h>
 
 #define MEM_MAPQ_COEF 30.0
 #define MEM_MAPQ_MAX  60
@@ -53,7 +54,7 @@ typedef struct {
 	int max_ins;            // when estimating insert size distribution, skip pairs with insert longer than this value
 	int max_matesw;         // perform maximally max_matesw rounds of mate-SW for each end
 	int max_XA_hits, max_XA_hits_alt; // if there are max_hits or fewer, output them all
-	int cuda_num_threads;	// Specified if the option to execute seed extension step in CUDA, this var is the number of CUDA threads will be used.
+	bool cuda_se_enabled;	// Specified if the option to execute seed extension step in CUDA.
 	int8_t mat[25];         // scoring matrix; mat[0] == 0 if unset
 } mem_opt_t;
 
