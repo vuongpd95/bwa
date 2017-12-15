@@ -15,6 +15,7 @@
 #include "kvec.h"
 #include "ksort.h"
 #include "utils.h"
+#include "se_kernel.h"
 
 #ifdef USE_MALLOC_WRAPPERS
 #  include "malloc_wrap.h"

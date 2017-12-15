@@ -12,11 +12,6 @@
 #include "utils.h"
 #include "bntseq.h"
 #include "kseq.h"
-#include "se_kernel.h"
-
-void cuda_mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, \
-	const bntseq_t *bns, const uint8_t *pac, int64_t n_processed, int n, \
-	bseq1_t *seqs, const mem_pestat_t *pes0);
 
 extern unsigned char nst_nt4_table[256];
 
@@ -57,19 +52,19 @@ static void *process(void *shared, int step, void *_data)
 				fprintf(stderr, "[M::%s] %d single-end sequences; %d paired-end sequences\n", __func__, n_seq[0], n_seq[1]);
 			if (n_seq[0]) {
 				tmp_opt.flag &= ~MEM_F_PE;
-				cuda_mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, n_seq[0], seq[0], 0);
+				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, n_seq[0], seq[0], 0);
 				for (i = 0; i < n_seq[0]; ++i)
 					data->seqs[seq[0][i].id].sam = seq[0][i].sam;
 			}
 			if (n_seq[1]) {
 				tmp_opt.flag |= MEM_F_PE;
-				cuda_mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed + n_seq[0], n_seq[1], seq[1], \
+				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed + n_seq[0], n_seq[1], seq[1], \
 						aux->pes0);
 				for (i = 0; i < n_seq[1]; ++i)
 					data->seqs[seq[1][i].id].sam = seq[1][i].sam;
 			}
 			free(seq[0]); free(seq[1]);
-		} else cuda_mem_process_seqs(opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, data->n_seqs, data->seqs, aux->pes0);
+		} else mem_process_seqs(opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, data->n_seqs, data->seqs, aux->pes0);
 		aux->n_processed += data->n_seqs;
 		return data;
 	} else if (step == 2) {
@@ -337,9 +332,7 @@ int main_mem(int argc, char *argv[])
 		}
 	}
 	bwa_print_sam_hdr(aux.idx->bns, hdr_line);
-	if (opt->cuda_se_enabled) {
-		aux.actual_chunk_size = N * LEN_SEQ;
-	} else aux.actual_chunk_size = fixed_chunk_size > 0? fixed_chunk_size : opt->chunk_size * opt->n_threads;
+	aux.actual_chunk_size = fixed_chunk_size > 0? fixed_chunk_size : opt->chunk_size * opt->n_threads;
 	kt_pipeline(no_mt_io? 1 : 2, process, &aux, 3);
 	free(hdr_line);
 	free(opt);
