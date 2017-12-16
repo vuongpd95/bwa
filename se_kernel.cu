@@ -1,6 +1,6 @@
 /******************************************************************************
 * PROGRAM: se_kernel
-* PURPOSE: This is a collection of functions which is intened to optimize the 
+* PURPOSE: This is a collection of functions which is intended to optimize the
 * 	speed of seed extension step in BWA MEM procedure.
 *
 *
@@ -459,11 +459,6 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 			  // of different mem_alnreg_v
 	mem_alnreg_v *h_fav, *d_fav; // Arrays which hold flat mem_alnreg_v
 	mem_alnreg_t *h_av_a, *d_av_a; // Arrays which hold all mem_alnreg_t
-	/*
-	int r_n;
-	if (opt->flag & MEM_F_PE) r_n = n >> 1;
-	else r_n = n;
-	*/
 	h_fav = (mem_alnreg_v*)malloc(n * sizeof(mem_alnreg_v));
 	gpuErrchk(cudaMalloc(&d_fav, n * sizeof(mem_alnreg_v)));
 
