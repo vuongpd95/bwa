@@ -15,31 +15,7 @@
 #include <math.h>
 
 #include "bwamem.h"
-// #include "bntseq.h"
 #include "utils.h"
-// #include "kvec.h"
-// #include "ksw.h"
-/*
-typedef struct {
-	int n, m, first, rid;
-	uint32_t w:29, kept:2, is_alt:1;
-	float frac_rep;
-	int64_t pos;
-} flat_mem_chain_t;
-
-typedef struct {
-	size_t n, m;
-} flat_mem_chain_v;
-
-typedef struct {
-	int l_seq;
-	uint8_t *seq;
-} bseq2_t;
-
-typedef struct {
-	size_t n, m;
-} flat_mem_alnreg_v;
-*/
 typedef struct {
 	void *left, *right;
 	int depth;
@@ -59,7 +35,7 @@ typedef struct {
 #define ONE_MBYTE (1024*1024)
 #define FIXED_HEAP 1024
 #define LEN_SEQ 79
-#define N 4096
+#define N 28672
 
 #define CUDA_KSORT_INIT(name, type_t, __sort_lt)						\
 	__device__ static void __cuda_ks_insertsort_##name(type_t *s, type_t *t)		\

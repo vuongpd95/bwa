@@ -273,14 +273,6 @@ void extension_kernel_single(int n, /*int len_seeds, */mem_opt_t *opt, uint8_t *
 	// pac can be used right away
 	// convert bns to desired form first
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
-	/*
-	int i = threadIdx.x;
-	for(;;) {
-		if (i > len_seeds) break;
-		shared_seeds[i] = seeds[i];
-		i += THREAD_LIMIT_PER_BLOCK;
-	}
-	*/
 	__syncthreads();
 	bntseq_t bns;
 	bns.l_pac = l_pac;
@@ -336,35 +328,6 @@ void extension_kernel_single(int n, /*int len_seeds, */mem_opt_t *opt, uint8_t *
 		fav[tid<<1|1].n = avs[tid]->n;
 		fav[tid<<1|1].m = avs[tid]->m;
 	}
-	/*
-	int i = tid;
-	if(shared_opt->flag & MEM_F_PE) {
-		int alt_n = n >> 1;
-		if (i >= alt_n) {
-			avs[i<<1|0] = cuda_mem_align1_core(shared_opt, &bns, pac, \
-					&seq[i_seq[i<<1|0]], f_chns, f_a, i_a, seeds, i_seeds, i<<1|0, n);
-			atomicAdd(na, avs[i<<1|0]->n);
-			fav[i<<1|0].n = avs[i<<1|0]->n;
-			fav[i<<1|0].m = avs[i<<1|0]->m;
-
-			avs[i<<1|1] = cuda_mem_align1_core(shared_opt, &bns, pac, \
-					&seq[i_seq[i<<1|1]], f_chns, f_a, i_a, seeds, i_seeds, i<<1|1, n);
-
-			atomicAdd(na, avs[i<<1|1]->n);
-			fav[i<<1|1].n = avs[i<<1|1]->n;
-			fav[i<<1|1].m = avs[i<<1|1]->m;
-		}
-	} else {
-		if (i >= n) {
-			avs[i] = cuda_mem_align1_core(opt, &bns, pac, \
-					&seq[LEN_SEQ * threadIdx.x], &shared_f_chns, f_a,\
-					&shared_i_a, &shared_seeds, &shared_i_seeds, i, n);
-			atomicAdd(na, avs[i]->n);
-			fav[i].n = avs[i]->n;
-			fav[i].m = avs[i]->m;
-		}
-	}
-	*/
 }
 
 __global__ 
