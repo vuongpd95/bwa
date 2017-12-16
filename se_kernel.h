@@ -31,7 +31,7 @@ typedef struct {
 }
 
 #define MAX_BAND_TRY  2
-#define THREAD_LIMIT_PER_BLOCK 512
+#define THREAD_LIMIT_PER_BLOCK 384
 #define WARP_SIZE 32
 #define ONE_MBYTE (1024*1024)
 #define FIXED_HEAP 1024
