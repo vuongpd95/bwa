@@ -15,31 +15,8 @@
 #include <math.h>
 
 #include "bwamem.h"
-// #include "bntseq.h"
 #include "utils.h"
-// #include "kvec.h"
-// #include "ksw.h"
-/*
-typedef struct {
-	int n, m, first, rid;
-	uint32_t w:29, kept:2, is_alt:1;
-	float frac_rep;
-	int64_t pos;
-} flat_mem_chain_t;
 
-typedef struct {
-	size_t n, m;
-} flat_mem_chain_v;
-
-typedef struct {
-	int l_seq;
-	uint8_t *seq;
-} bseq2_t;
-
-typedef struct {
-	size_t n, m;
-} flat_mem_alnreg_v;
-*/
 typedef struct {
 	void *left, *right;
 	int depth;

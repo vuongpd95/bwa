@@ -13,7 +13,7 @@ LIBS=		-lm -lz -lpthread -lcudart
 SUBDIRS=	.
 
 # Location of the CUDA Toolkit
-CUDA_PATH       ?= /usr/local/cuda-7.0
+CUDA_PATH       ?= /usr/local/cuda
 
 ##############################
 # start deprecated interface #
