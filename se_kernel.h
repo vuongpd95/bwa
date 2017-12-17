@@ -35,7 +35,7 @@ typedef struct {
 #define ONE_MBYTE (1024*1024)
 #define FIXED_HEAP 1024
 #define LEN_SEQ 79
-#define N 28672
+#define N 51200
 
 #define CUDA_KSORT_INIT(name, type_t, __sort_lt)						\
 	__device__ static void __cuda_ks_insertsort_##name(type_t *s, type_t *t)		\
