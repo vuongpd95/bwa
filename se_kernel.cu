@@ -5,7 +5,7 @@
 *
 *
 * NAME: Vuong Pham-Duy.
-	College student.
+*		College student.
 *       Faculty of Computer Science and Engineering.
 *       Ho Chi Minh University of Technology, Viet Nam.
 *       vuongpd95@gmail.com
