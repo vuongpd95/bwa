@@ -1,4 +1,5 @@
-/******************************************************************************
+/*********************
+ * *********************************************************
 * PROGRAM: se_kernel
 * PURPOSE: This is a collection of functions which is intened to optimize the 
 * 	speed of seed extension step in BWA MEM procedure.
