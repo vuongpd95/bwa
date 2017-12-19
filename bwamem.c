@@ -17,6 +17,9 @@
 #include "utils.h"
 #include "se_kernel.h"
 
+void cuda_mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, \
+		int l_query, const uint8_t *query, const mem_chain_t *c, mem_alnreg_v *av);
+
 #ifdef USE_MALLOC_WRAPPERS
 #  include "malloc_wrap.h"
 #endif
@@ -651,7 +654,7 @@ void mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac
 	for (k = c->n - 1; k >= 0; --k) {
 		mem_alnreg_t *a;
 		s = &c->seeds[(uint32_t)srt[k]];
-
+		// TODO: Try converting this, might work
 		for (i = 0; i < av->n; ++i) { // test whether extension has been made before
 			mem_alnreg_t *p = &av->a[i];
 			int64_t rd;
@@ -767,8 +770,7 @@ void mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac
 						opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, aw[1], opt->pen_clip3, opt->zdrop, sc0, \
 						&qle, &tle, &gtle, &gscore, &max_off[1]);
 				if (bwa_verbose >= 4) {
-					printf("*** Right extension: prev_score=%d; score=%d; bandwidth=%d; "
-						"\max_off_diagonal_dist=%d\n", prev, a->score, aw[1], max_off[1]);
+					printf("*** Right extension: prev_score=%d; score=%d; bandwidth=%d; max_off_diagonal_dist=%d\n", prev, a->score, aw[1], max_off[1]);
 					fflush(stdout);
 				}
 				if (a->score == prev || max_off[1] < (aw[1]>>1) + (aw[1]>>2)) break;
@@ -1081,7 +1083,7 @@ mem_alnreg_v mem_align1_core(const mem_opt_t *opt, const bwt_t *bwt, const bntse
 	for (i = 0; i < chn.n; ++i) {
 		mem_chain_t *p = &chn.a[i];
 		if (bwa_verbose >= 4) err_printf("* ---> Processing chain(%d) <---\n", i);
-		mem_chain2aln(opt, bns, pac, l_seq, (uint8_t*)seq, p, &regs);
+		cuda_mem_chain2aln(opt, bns, pac, l_seq, (uint8_t*)seq, p, &regs);
 		free(chn.a[i].seeds);
 	}
 	free(chn.a);

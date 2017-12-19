@@ -16,13 +16,14 @@
 
 #include "bwamem.h"
 #include "utils.h"
+#include "ksw.h"
+#include "kvec.h"
 
 #define gpuErrchk(ans) { \
 	gpuAssert((ans), __FILE__, __LINE__); \
 }
 
 #define MAX_BAND_TRY 2
-#define THREAD_LIMIT_PER_BLOCK 128
 #define WARP_SIZE 32
 #define ONE_MBYTE (1024*1024)
 #define FIXED_HEAP 1024

@@ -417,6 +417,7 @@ int ksw_extend2(int qlen, const uint8_t *query, int tlen, const uint8_t *target,
 			h1 = h0 - (o_del + e_del * (i + 1));
 			if (h1 < 0) h1 = 0;
 		} else h1 = 0;
+		// TODO: Try converting this loop, might work
 		for (j = beg; LIKELY(j < end); ++j) {
 			// At the beginning of the loop: eh[j] = { H(i-1,j-1), E(i,j) }, f = F(i,j) and h1 = H(i,j-1)
 			// Similar to SSE2-SW, cells are computed in the following order:
