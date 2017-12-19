@@ -19,6 +19,12 @@
 #include "ksw.h"
 #include "kvec.h"
 
+#ifdef __GNUC__
+#define LIKELY(x) __builtin_expect((x),1)
+#else
+#define LIKELY(x) (x)
+#endif
+
 #define gpuErrchk(ans) { \
 	gpuAssert((ans), __FILE__, __LINE__); \
 }
@@ -27,5 +33,6 @@
 #define WARP_SIZE 32
 #define ONE_MBYTE (1024*1024)
 #define FIXED_HEAP 1024
+
 
 #endif /* SE_KERNEL_H_ */
