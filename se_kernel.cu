@@ -47,24 +47,249 @@ void print_mem_info()
 /********************
  *** SW extension ***
  ********************/
-int cuda_ksw_extend2(int qlen, const uint8_t *query, int tlen, const uint8_t *target, int m, const int8_t *mat, int o_del, int e_del, int o_ins, int e_ins, int w, int end_bonus, int zdrop, int h0, int *_qle, int *_tle, int *_gtle, int *_gscore, int *_max_off)
+__device__
+bool check_active(int32_t h, int32_t e) {
+	if(h != -1 && e != -1) return true;
+	else return false;
+}
+__device__
+void reset(int32_t *h, int32_t *e) {
+	*h = -1;
+	*e = -1;
+}
+
+extern __shared__ int32_t container[];
+__global__
+void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gscore, int *d_max_off, \
+		int w, int oe_ins, int e_ins, int o_del, int e_del, int oe_del, int m, \
+		int tlen, int qlen, int passes, int t_lastp, int h0, int zdrop, \
+		int32_t *h, int8_t *qp, const uint8_t *target) {
+	__shared__ int break_cnt;
+	__shared__ int max;
+	__shared__ int max_i;
+	__shared__ int max_j;
+	__shared__ int max_ie;
+	__shared__ int gscore;
+	__shared__ int max_off;
+	int lane_id, i;
+	int in_h, in_e;
+	int out_h, out_e;
+	int active_ts, beg, end;
+	int32_t *se, *sh;
+	int8_t *sqp;
+	lane_id  = threadIdx.x % WARP;
+	/* Initialize
+	if(lane_id == 0) {
+		max = h0;
+		max_i = -1;
+		max_j = -1;
+		max_ie = -1;
+		gscore = -1;
+		max_off = 0;
+	}
+	*/
+	if(lane_id == 0) break_cnt = 0;
+	i = lane_id;
+	sh = container;
+	se = (int32_t*)&sh[qlen + 1];
+	sqp = (int8_t*)&se[qlen + 1];
+	for(;;) {
+		if(i < qlen + 1) {
+			sh[i] = h[i];
+			se[i] = 0;
+		}
+		// qlen > 1, m = 5, qlen * m always bigger than qlen + 1
+		if(i < qlen * m) sqp[i] = qp[i];
+		else break;
+		i += WARP;
+	}
+	__syncthreads();
+	for(int i = 0; i < passes; i++) {
+		if(i == passes - 1) {
+			if(lane_id >= t_lastp) break;
+			else active_ts = t_lastp;
+		} else active_ts = WARP;
+		reset(&in_h, &in_e); reset(&out_h, &out_e);
+		beg = 0; end = qlen;
+
+		int t, row_i, f = 0, h1, m = 0, mj = -1;
+		int8_t *q = &sqp[target[i] * qlen];
+		row_i = i * WARP + lane_id;
+		// apply the band and the constraint (if provided)
+		if (beg < i - w) beg = i - w;
+		if (end > i + w + 1) end = i + w + 1;
+		if (end > qlen) end = qlen;
+		// reset input, output
+
+		if (beg == 0) {
+			h1 = h0 - (o_del + e_del * (row_i + 1));
+			if (h1 < 0) h1 = 0;
+		} else h1 = 0;
+
+		__syncthreads();
+		/* original codes
+		for (i = 0; LIKELY(i < tlen); ++i) {
+			int t, f = 0, h1, m = 0, mj = -1;
+			int8_t *q = &qp[target[i] * qlen];
+			// apply the band and the constraint (if provided)
+			if (beg < i - w) beg = i - w;
+			if (end > i + w + 1) end = i + w + 1;
+			if (end > qlen) end = qlen;
+			// compute the first column
+			if (beg == 0) {
+				h1 = h0 - (o_del + e_del * (i + 1));
+				if (h1 < 0) h1 = 0;
+			} else h1 = 0;
+			for (j = beg; LIKELY(j < end); ++j) {
+				// At the beginning of the loop: eh[j] = { H(i-1,j-1), E(i,j) }, f = F(i,j) and h1 = H(i,j-1)
+				// Similar to SSE2-SW, cells are computed in the following order:
+				//   H(i,j)   = max{H(i-1,j-1)+S(i,j), E(i,j), F(i,j)}
+				//   E(i+1,j) = max{H(i,j)-gapo, E(i,j)} - gape
+				//   F(i,j+1) = max{H(i,j)-gapo, F(i,j)} - gape
+				eh_t *p = &eh[j];
+				int h, M = p->h, e = p->e; // get H(i-1,j-1) and E(i-1,j)
+				p->h = h1;          // set H(i,j-1) for the next row
+				M = M? M + q[j] : 0;// separating H and M to disallow a cigar like "100M3I3D20M"
+				h = M > e? M : e;   // e and f are guaranteed to be non-negative, so h>=0 even if M<0
+				h = h > f? h : f;
+				h1 = h;             // save H(i,j) to h1 for the next column
+				mj = m > h? mj : j; // record the position where max score is achieved
+				m = m > h? m : h;   // m is stored at eh[mj+1]
+
+				t = M - oe_del;
+				t = t > 0? t : 0;
+				e -= e_del;
+				e = e > t? e : t;   // computed E(i+1,j)
+
+				p->e = e;           // save E(i+1,j) for the next row
+
+				t = M - oe_ins;
+				t = t > 0? t : 0;
+				f -= e_ins;
+				f = f > t? f : t;   // computed F(i,j+1)
+			}
+			eh[end].h = h1; eh[end].e = 0;
+			if (j == qlen) {
+				max_ie = gscore > h1? max_ie : i;
+				gscore = gscore > h1? gscore : h1;
+			}
+			if (m == 0) break;
+			if (m > max) {
+				max = m, max_i = i, max_j = mj;
+				max_off = max_off > abs(mj - i)? max_off : abs(mj - i);
+			} else if (zdrop > 0) {
+				if (i - max_i > mj - max_j) {
+					if (max - m - ((i - max_i) - (mj - max_j)) * e_del > zdrop) break;
+				} else {
+					if (max - m - ((mj - max_j) - (i - max_i)) * e_ins > zdrop) break;
+				}
+			}
+			// This following part works well with sequential but is hard to implement in parallel
+			// update beg and end for the next round
+			for (j = beg; LIKELY(j < end) && eh[j].h == 0 && eh[j].e == 0; ++j);
+			beg = j;
+			for (j = end; LIKELY(j >= beg) && eh[j].h == 0 && eh[j].e == 0; --j);
+			end = j + 2 < qlen? j + 2 : qlen;
+			//beg = 0; end = qlen; // uncomment this line for debugging
+		}
+		*/
+		do {
+			// We can not use shfl when two threads are in different if/else branch
+			// Keep shfl cmds outside of all if/else
+			in_h = __shfl(out_h, lane_id - 1, WARP);
+			in_e = __shfl(out_e, lane_id - 1, WARP);
+
+			if(lane_id == 0) {
+				in_h = sh[beg];
+				in_e = se[beg];
+			}
+			//__syncthreads();
+			if(check_active(in_h, in_e)) {
+				int h; 										// get H(i-1,j-1) and E(i-1,j)
+				if(lane_id != active_ts - 1) out_h = h1;
+				else if(i != passes - 1) sh[beg] = h1; 		// set H(i,j-1) for the next row
+				in_h = in_h? in_h + q[beg] : 0;				// separating H and M to disallow a cigar like "100M3I3D20M"
+				h = in_h > in_e? in_h : in_e;   			// e and f are guaranteed to be non-negative,
+															// so h>=0 even if M<0
+				h = h > f? h : f;
+				h1 = h;             						// save H(i,j) to h1 for the next column
+				mj = m > h? mj : beg; 						// record the position where max score is achieved
+				m = m > h? m : h;   						// m is stored at eh[mj+1]
+
+				t = in_h - oe_del;
+				t = t > 0? t : 0;
+				in_e -= e_del;
+				in_e = in_e > t? in_e : t;   				// computed E(i+1,j)
+
+				if(lane_id != active_ts - 1) out_e = in_e;	// save E(i+1,j) for the next row
+				else if(i != passes - 1) sh[beg] = in_e;
+
+				t = in_h - oe_ins;
+				t = t > 0? t : 0;
+				f -= e_ins;
+				f = f > t? f : t;  	 						// computed F(i,j+1)
+
+				reset(&in_h, &in_e);
+				beg += 1;
+			} // else ...
+		} while(beg < end);
+		sh[end] = h1; se[end] = 0;
+		// Critical section
+		if(beg == qlen) {
+			max_ie = gscore > h1? max_ie : row_i;
+			gscore = gscore > h1? gscore : h1;
+		}
+		//
+		// Possible slow down all computations by using the following __syncthreads() (s)
+		if(m == 0) atomicAdd(&break_cnt, 1);
+		__syncthreads();
+		if(break_cnt > 0) break;
+		// Critical section
+		if(m > max) {
+			max = m, max_i = row_i, max_j = mj;
+			max_off = max_off > abs(mj - row_i)? max_off : abs(mj - row_i);
+		} else if (zdrop > 0) {
+			if (i - max_i > mj - max_j) {
+				if (max - m - ((row_i - max_i) - (mj - max_j)) * e_del > zdrop) atomicAdd(&break_cnt, 1);
+			} else {
+				if (max - m - ((mj - max_j) - (row_i - max_i)) * e_ins > zdrop) atomicAdd(&break_cnt, 1);
+			}
+		}
+		//
+		__syncthreads();
+		if(break_cnt > 0) break;
+	}
+}
+int cuda_ksw_extend2(int qlen, const uint8_t *query, \
+		int tlen, const uint8_t *target, \
+		int m, const int8_t *mat, \
+		int o_del, int e_del, int o_ins, \
+		int e_ins, int w, int end_bonus, \
+		int zdrop, int h0, int *_qle, \
+		int *_tle, int *_gtle, int *_gscore, int *_max_off)
 {
-	eh_t *eh; // score array
+	int32_t *h;
 	int8_t *qp; // query profile
-	int i, j, k, oe_del = o_del + e_del, oe_ins = o_ins + e_ins, beg, end, max, max_i, max_j, max_ins, max_del, max_ie, gscore, max_off;
+	int i, j, k;
+	int	oe_del = o_del + e_del; // opening and ending deletion
+	int	oe_ins = o_ins + e_ins; // opening and ending insertion
+	int max, max_i, max_j, max_ins, max_del, max_ie, gscore, max_off;
+	int passes, t_lastp; // number of passes and number of thread active in the last pass
 	assert(h0 > 0);
 	// allocate memory
 	qp = (int8_t*)malloc(qlen * m);
-	eh = (eh_t*)calloc(qlen + 1, 8);
+	h = (int32_t*)calloc(qlen + 1, sizeof(int32_t));
+
 	// generate the query profile
 	for (k = i = 0; k < m; ++k) {
 		const int8_t *p = &mat[k * m];
 		for (j = 0; j < qlen; ++j) qp[i++] = p[query[j]];
 	}
 	// fill the first row
-	eh[0].h = h0; eh[1].h = h0 > oe_ins? h0 - oe_ins : 0;
-	for (j = 2; j <= qlen && eh[j-1].h > e_ins; ++j)
-		eh[j].h = eh[j-1].h - e_ins;
+	h[0] = h0; h[1] = h0 > oe_ins? h0 - oe_ins : 0;
+	for (j = 2; j <= qlen && h[j-1] > e_ins; ++j) {
+		h[j] = h[j - 1] - e_ins;
+	}
 	// adjust $w if it is too large
 	k = m * m;
 	for (i = 0, max = 0; i < k; ++i) // get the max score
@@ -76,75 +301,78 @@ int cuda_ksw_extend2(int qlen, const uint8_t *query, int tlen, const uint8_t *ta
 	max_del = max_del > 1? max_del : 1;
 	w = w < max_del? w : max_del; // TODO: is this necessary?
 	// DP loop
-	max = h0, max_i = max_j = -1; max_ie = -1, gscore = -1;
-	max_off = 0;
-	beg = 0, end = qlen;
-	for (i = 0; LIKELY(i < tlen); ++i) {
-		int t, f = 0, h1, m = 0, mj = -1;
-		int8_t *q = &qp[target[i] * qlen];
-		// apply the band and the constraint (if provided)
-		if (beg < i - w) beg = i - w;
-		if (end > i + w + 1) end = i + w + 1;
-		if (end > qlen) end = qlen;
-		// compute the first column
-		if (beg == 0) {
-			h1 = h0 - (o_del + e_del * (i + 1));
-			if (h1 < 0) h1 = 0;
-		} else h1 = 0;
-		for (j = beg; LIKELY(j < end); ++j) {
-			// At the beginning of the loop: eh[j] = { H(i-1,j-1), E(i,j) }, f = F(i,j) and h1 = H(i,j-1)
-			// Similar to SSE2-SW, cells are computed in the following order:
-			//   H(i,j)   = max{H(i-1,j-1)+S(i,j), E(i,j), F(i,j)}
-			//   E(i+1,j) = max{H(i,j)-gapo, E(i,j)} - gape
-			//   F(i,j+1) = max{H(i,j)-gapo, F(i,j)} - gape
-			eh_t *p = &eh[j];
-			int h, M = p->h, e = p->e; // get H(i-1,j-1) and E(i-1,j)
-			p->h = h1;          // set H(i,j-1) for the next row
-			M = M? M + q[j] : 0;// separating H and M to disallow a cigar like "100M3I3D20M"
-			h = M > e? M : e;   // e and f are guaranteed to be non-negative, so h>=0 even if M<0
-			h = h > f? h : f;
-			h1 = h;             // save H(i,j) to h1 for the next column
-			mj = m > h? mj : j; // record the position where max score is achieved
-			m = m > h? m : h;   // m is stored at eh[mj+1]
-			t = M - oe_del;
-			t = t > 0? t : 0;
-			e -= e_del;
-			e = e > t? e : t;   // computed E(i+1,j)
-			p->e = e;           // save E(i+1,j) for the next row
-			t = M - oe_ins;
-			t = t > 0? t : 0;
-			f -= e_ins;
-			f = f > t? f : t;   // computed F(i,j+1)
-		}
-		eh[end].h = h1; eh[end].e = 0;
-		if (j == qlen) {
-			max_ie = gscore > h1? max_ie : i;
-			gscore = gscore > h1? gscore : h1;
-		}
-		if (m == 0) break;
-		if (m > max) {
-			max = m, max_i = i, max_j = mj;
-			max_off = max_off > abs(mj - i)? max_off : abs(mj - i);
-		} else if (zdrop > 0) {
-			if (i - max_i > mj - max_j) {
-				if (max - m - ((i - max_i) - (mj - max_j)) * e_del > zdrop) break;
-			} else {
-				if (max - m - ((mj - max_j) - (i - max_i)) * e_ins > zdrop) break;
-			}
-		}
-		// update beg and end for the next round
-		for (j = beg; LIKELY(j < end) && eh[j].h == 0 && eh[j].e == 0; ++j);
-		beg = j;
-		for (j = end; LIKELY(j >= beg) && eh[j].h == 0 && eh[j].e == 0; --j);
-		end = j + 2 < qlen? j + 2 : qlen;
-		//beg = 0; end = qlen; // uncomment this line for debugging
-	}
-	free(eh); free(qp);
+	max = h0, max_i = max_j = -1; max_ie = -1, gscore = -1; max_off = 0;
+
+	// Initialize
+	// memset: max, max_j, max_i, max_ie, gscore, max_off -> GPU
+	// kernel parameters:
+	// value: w, oe_ins, e_ins, o_del, e_del, oe_del, tlen, qlen, passes, t_lastp, h0, zdrop
+	// memcpy: e[...], h[...], qp[...], target[...]
+	int *d_max, *d_max_j, *d_max_i, *d_max_ie, *d_gscore, *d_max_off;
+	int32_t *d_h;
+	int8_t *d_qp;
+	uint8_t *d_target;
+
+	passes = (int)((double)tlen / (double)WARP + 1.);
+	t_lastp = tlen - (tlen / WARP) * WARP;
+	// Allocate device memory
+	gpuErrchk(cudaMalloc(&d_max, sizeof(int)));
+	gpuErrchk(cudaMalloc(&d_max_j, sizeof(int)));
+	gpuErrchk(cudaMalloc(&d_max_i, sizeof(int)));
+	gpuErrchk(cudaMalloc(&d_max_ie, sizeof(int)));
+	gpuErrchk(cudaMalloc(&d_gscore, sizeof(int)));
+	gpuErrchk(cudaMalloc(&d_max_off, sizeof(int)));
+
+	gpuErrchk(cudaMalloc(&d_h, sizeof(int32_t) * (qlen + 1)));
+	gpuErrchk(cudaMalloc(&d_qp, sizeof(int8_t) * qlen * m));
+	gpuErrchk(cudaMalloc(&d_target, sizeof(uint8_t) * tlen));
+	/* memset d_variables */
+	gpuErrchk(cudaMemset(d_max, h0, sizeof(int)));
+	gpuErrchk(cudaMemset(d_max_j, -1, sizeof(int)));
+	gpuErrchk(cudaMemset(d_max_i, -1, sizeof(int)));
+	gpuErrchk(cudaMemset(d_max_ie, -1, sizeof(int)));
+	gpuErrchk(cudaMemset(d_gscore, -1, sizeof(int)));
+	gpuErrchk(cudaMemset(d_max_off, 0, sizeof(int)));
+	// Transfer data to GPU
+	gpuErrchk(cudaMemcpy(d_h, h, sizeof(int32_t) * (qlen + 1), cudaMemcpyHostToDevice));
+	gpuErrchk(cudaMemcpy(d_qp, qp, sizeof(int8_t) * qlen * m, cudaMemcpyHostToDevice));
+	gpuErrchk(cudaMemcpy(d_target, target, sizeof(uint8_t) * tlen, cudaMemcpyHostToDevice));
+	// The kernel
+	sw_kernel<<<1, WARP, 2 * (qlen + 1) * sizeof(int32_t) + qlen * m * sizeof(int8_t)>>>\
+			(d_max, d_max_j, d_max_i, d_max_ie, d_gscore, d_max_off, \
+			w, oe_ins, e_ins, o_del, e_del, oe_del, m, \
+			tlen, qlen, passes, t_lastp, h0, zdrop, \
+			h, qp, target);
+
+	gpuErrchk(cudaPeekAtLastError());
+	gpuErrchk(cudaDeviceSynchronize());
+
+	// Deallocate host variables
+	free(h); free(qp);
+	// Get the result back from kernel
+	gpuErrchk(cudaMemcpy(&max, d_max, sizeof(int), cudaMemcpyDeviceToHost));
+	gpuErrchk(cudaMemcpy(&max_j, d_max_j, sizeof(int), cudaMemcpyDeviceToHost));
+	gpuErrchk(cudaMemcpy(&max_i, d_max_i, sizeof(int), cudaMemcpyDeviceToHost));
+	gpuErrchk(cudaMemcpy(&max_ie, d_max_ie, sizeof(int), cudaMemcpyDeviceToHost));
+	gpuErrchk(cudaMemcpy(&gscore, d_gscore, sizeof(int), cudaMemcpyDeviceToHost));
+	gpuErrchk(cudaMemcpy(&max_off, d_max_off, sizeof(int), cudaMemcpyDeviceToHost));
+	// Deallocate CUDA variables
+	gpuErrchk(cudaFree(d_max_j));
+	gpuErrchk(cudaFree(d_max_i));
+	gpuErrchk(cudaFree(d_max_ie));
+	gpuErrchk(cudaFree(d_gscore));
+	gpuErrchk(cudaFree(d_max_off));
+	gpuErrchk(cudaFree(d_max));
+	gpuErrchk(cudaFree(d_h));
+	gpuErrchk(cudaFree(d_qp));
+	gpuErrchk(cudaFree(d_target));
+	// Return results
 	if (_qle) *_qle = max_j + 1;
 	if (_tle) *_tle = max_i + 1;
 	if (_gtle) *_gtle = max_ie + 1;
 	if (_gscore) *_gscore = gscore;
 	if (_max_off) *_max_off = max_off;
+
 	return max;
 }
 

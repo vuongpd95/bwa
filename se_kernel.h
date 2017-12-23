@@ -30,9 +30,8 @@
 }
 
 #define MAX_BAND_TRY 2
-#define WARP_SIZE 32
+#define WARP 32
 #define ONE_MBYTE (1024*1024)
-#define FIXED_HEAP 1024
 
 
 #endif /* SE_KERNEL_H_ */
