@@ -1083,7 +1083,8 @@ mem_alnreg_v mem_align1_core(const mem_opt_t *opt, const bwt_t *bwt, const bntse
 	for (i = 0; i < chn.n; ++i) {
 		mem_chain_t *p = &chn.a[i];
 		if (bwa_verbose >= 4) err_printf("* ---> Processing chain(%d) <---\n", i);
-		cuda_mem_chain2aln(opt, bns, pac, l_seq, (uint8_t*)seq, p, &regs);
+		if (opt->cuda_se_enabled) cuda_mem_chain2aln(opt, bns, pac, l_seq, (uint8_t*)seq, p, &regs);
+		else mem_chain2aln(opt, bns, pac, l_seq, (uint8_t*)seq, p, &regs);
 		free(chn.a[i].seeds);
 	}
 	free(chn.a);
