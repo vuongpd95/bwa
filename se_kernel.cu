@@ -71,6 +71,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 	__shared__ int max_ie;
 	__shared__ int gscore;
 	__shared__ int max_off;
+
 	int lane_id, i;
 	int in_h, in_e;
 	int out_h, out_e;
@@ -205,44 +206,51 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 			}
 			//__syncthreads();
 			if(check_active(in_h, in_e)) {
-				int h; 										// get H(i-1,j-1) and E(i-1,j)
+				int h; 											// get H(i-1,j-1) and E(i-1,j)
 				if(lane_id != active_ts - 1) out_h = h1;
-				else if(i != passes - 1) sh[beg] = h1; 		// set H(i,j-1) for the next row
-				in_h = in_h? in_h + q[beg] : 0;				// separating H and M to disallow a cigar like "100M3I3D20M"
-				h = in_h > in_e? in_h : in_e;   			// e and f are guaranteed to be non-negative,
-															// so h>=0 even if M<0
+				else if(i != passes - 1) sh[beg] = h1; 			// set H(i,j-1) for the next row
+				in_h = in_h? in_h + q[beg] : 0;					// separating H and M to disallow a cigar like
+																// "100M3I3D20M"
+				h = in_h > in_e? in_h : in_e;   				// e and f are guaranteed to be non-negative,
+																// so h>=0 even if M<0
 				h = h > f? h : f;
-				h1 = h;             						// save H(i,j) to h1 for the next column
-				mj = m > h? mj : beg; 						// record the position where max score is achieved
-				m = m > h? m : h;   						// m is stored at eh[mj+1]
-
+				h1 = h;											// save H(i,j) to h1 for the next column
+				//if (beg == end - 1) {
+					mj = m > h? mj : beg; 						// record the position where max score is achieved
+					m = m > h? m : h;   						// m is stored at eh[mj+1]
+				//}
 				t = in_h - oe_del;
 				t = t > 0? t : 0;
 				in_e -= e_del;
-				in_e = in_e > t? in_e : t;   				// computed E(i+1,j)
+				in_e = in_e > t? in_e : t;   					// computed E(i+1,j)
 
-				if(lane_id != active_ts - 1) out_e = in_e;	// save E(i+1,j) for the next row
-				else if(i != passes - 1) sh[beg] = in_e;
+				//if(beg == end - 1) {
+				//	if(lane_id != active_ts - 1) out_e = 0;		// save E(i+1,j) for the next row
+				//	else if(i != passes - 1) sh[beg] = 0;
+				//} else {
+					if(lane_id != active_ts - 1) out_e = in_e;	// save E(i+1,j) for the next row
+					else if(i != passes - 1) sh[beg] = in_e;
+				//}
 
 				t = in_h - oe_ins;
 				t = t > 0? t : 0;
 				f -= e_ins;
-				f = f > t? f : t;  	 						// computed F(i,j+1)
+				f = f > t? f : t;  	 							// computed F(i,j+1)
 
 				reset(&in_h, &in_e);
 				beg += 1;
 			} // else ...
-		} while(beg < end);
-		sh[end] = h1; se[end] = 0;
+		} while((beg < end));// || (lane_id != (active_ts - 1) && beg < end + 1));
+
 		// Critical section
 		if(beg == qlen) {
-			max_ie = gscore > h1? max_ie : row_i;
-			gscore = gscore > h1? gscore : h1;
+			max_ie = gscore > out_h? max_ie : row_i;
+			gscore = gscore > out_h? gscore : out_h;
 		}
 		//
 		// Possible slow down all computations by using the following __syncthreads() (s)
 		if(m == 0) atomicAdd(&break_cnt, 1);
-		__syncthreads();
+		//__syncthreads();
 		if(break_cnt > 0) break;
 		// Critical section
 		if(m > max) {
@@ -256,7 +264,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 			}
 		}
 		//
-		__syncthreads();
+		//__syncthreads();
 		if(break_cnt > 0) break;
 	}
 }
@@ -338,11 +346,12 @@ int cuda_ksw_extend2(int qlen, const uint8_t *query, \
 	gpuErrchk(cudaMemcpy(d_qp, qp, sizeof(int8_t) * qlen * m, cudaMemcpyHostToDevice));
 	gpuErrchk(cudaMemcpy(d_target, target, sizeof(uint8_t) * tlen, cudaMemcpyHostToDevice));
 	// The kernel
+
 	sw_kernel<<<1, WARP, 2 * (qlen + 1) * sizeof(int32_t) + qlen * m * sizeof(int8_t)>>>\
 			(d_max, d_max_j, d_max_i, d_max_ie, d_gscore, d_max_off, \
 			w, oe_ins, e_ins, o_del, e_del, oe_del, m, \
 			tlen, qlen, passes, t_lastp, h0, zdrop, \
-			h, qp, target);
+			d_h, d_qp, d_target);
 
 	gpuErrchk(cudaPeekAtLastError());
 	gpuErrchk(cudaDeviceSynchronize());
