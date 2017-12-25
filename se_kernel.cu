@@ -58,6 +58,10 @@ void reset(int32_t *h, int32_t *e) {
 	*e = -1;
 }
 
+__device__ bool warp_lock(int req){
+  return ((__ffs(__ballot(req))) == ((threadIdx.x & 31) + 1));
+}
+
 extern __shared__ int32_t container[];
 __global__
 void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gscore, int *d_max_off, \
@@ -72,6 +76,8 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 	__shared__ int gscore;
 	__shared__ int max_off;
 
+	int req = 0;
+	bool done;
 	int lane_id, i;
 	int in_h, in_e;
 	int out_h, out_e;
@@ -79,7 +85,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 	int32_t *se, *sh;
 	int8_t *sqp;
 	lane_id  = threadIdx.x % WARP;
-	/* Initialize
+	/* Initialize */
 	if(lane_id == 0) {
 		max = h0;
 		max_i = -1;
@@ -87,9 +93,9 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 		max_ie = -1;
 		gscore = -1;
 		max_off = 0;
+		break_cnt = 0;
 	}
-	*/
-	if(lane_id == 0) break_cnt = 0;
+
 	i = lane_id;
 	sh = container;
 	se = (int32_t*)&sh[qlen + 1];
@@ -215,7 +221,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 																// so h>=0 even if M<0
 				h = h > f? h : f;
 				h1 = h;											// save H(i,j) to h1 for the next column
-				//if (beg == end - 1) {
+				//if (beg < end) {
 					mj = m > h? mj : beg; 						// record the position where max score is achieved
 					m = m > h? m : h;   						// m is stored at eh[mj+1]
 				//}
@@ -224,7 +230,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 				in_e -= e_del;
 				in_e = in_e > t? in_e : t;   					// computed E(i+1,j)
 
-				//if(beg == end - 1) {
+				//if(beg >= end) {
 				//	if(lane_id != active_ts - 1) out_e = 0;		// save E(i+1,j) for the next row
 				//	else if(i != passes - 1) sh[beg] = 0;
 				//} else {
@@ -241,31 +247,68 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 				beg += 1;
 			} // else ...
 		} while((beg < end));// || (lane_id != (active_ts - 1) && beg < end + 1));
+		if(lane_id != active_ts - 1) {
+			out_h = h1;
+			out_e = 0;
+		} else if(i != passes - 1) {
+			sh[beg] = h1;
+			se[beg] = 0;
+		}
 
-		// Critical section
-		if(beg == qlen) {
-			max_ie = gscore > out_h? max_ie : row_i;
-			gscore = gscore > out_h? gscore : out_h;
-		}
-		//
-		// Possible slow down all computations by using the following __syncthreads() (s)
-		if(m == 0) atomicAdd(&break_cnt, 1);
-		//__syncthreads();
+		req = 1;
 		if(break_cnt > 0) break;
-		// Critical section
-		if(m > max) {
-			max = m, max_i = row_i, max_j = mj;
-			max_off = max_off > abs(mj - row_i)? max_off : abs(mj - row_i);
-		} else if (zdrop > 0) {
-			if (i - max_i > mj - max_j) {
-				if (max - m - ((row_i - max_i) - (mj - max_j)) * e_del > zdrop) atomicAdd(&break_cnt, 1);
-			} else {
-				if (max - m - ((mj - max_j) - (row_i - max_i)) * e_ins > zdrop) atomicAdd(&break_cnt, 1);
+		do {
+			done = false;
+			// attempt to  "acquire lock"
+			bool mylock = warp_lock(req);
+			// if lock acquired, do "critical section"
+			if (mylock){
+				done = true;
+				// Critical section
+				if(beg == qlen) {
+					max_ie = gscore > out_h? max_ie : row_i;
+					gscore = gscore > out_h? gscore : out_h;
+				}
+				req = 0;
 			}
-		}
-		//
-		//__syncthreads();
+			//__syncthreads();
+		} while (!done);
+
+		if(m == 0) atomicAdd(break_cnt, 1);
 		if(break_cnt > 0) break;
+
+		req = 1;
+		do {
+			done = false;
+			// attempt to  "acquire lock"
+			bool mylock = warp_lock(req);
+			// if lock acquired, do "critical section"
+			if (mylock){
+				done = true;
+				// Critical section
+				if(m > max) {
+					max = m, max_i = row_i, max_j = mj;
+					max_off = max_off > abs(mj - row_i)? max_off : abs(mj - row_i);
+				} else if (zdrop > 0) {
+					if (i - max_i > mj - max_j) {
+						if (max - m - ((row_i - max_i) - (mj - max_j)) * e_del > zdrop) break_cnt += 1;
+					} else {
+						if (max - m - ((mj - max_j) - (row_i - max_i)) * e_ins > zdrop) break_cnt += 1;
+					}
+				}
+				myreq = 0;
+			}
+			//__syncthreads();
+		} while (!done);
+		if (break_cnt > 0) break;
+	}
+	if(lane_id == 0) {
+		d_max = max;
+		d_max_i = max_i;
+		d_max_j = max_j;
+		d_max_ie = max_ie;
+		d_gscore = gscore;
+		d_max_off = max_off;
 	}
 }
 int cuda_ksw_extend2(int qlen, const uint8_t *query, \
@@ -334,13 +377,14 @@ int cuda_ksw_extend2(int qlen, const uint8_t *query, \
 	gpuErrchk(cudaMalloc(&d_h, sizeof(int32_t) * (qlen + 1)));
 	gpuErrchk(cudaMalloc(&d_qp, sizeof(int8_t) * qlen * m));
 	gpuErrchk(cudaMalloc(&d_target, sizeof(uint8_t) * tlen));
-	/* memset d_variables */
+	/* memset d_variables
 	gpuErrchk(cudaMemset(d_max, h0, sizeof(int)));
 	gpuErrchk(cudaMemset(d_max_j, -1, sizeof(int)));
 	gpuErrchk(cudaMemset(d_max_i, -1, sizeof(int)));
 	gpuErrchk(cudaMemset(d_max_ie, -1, sizeof(int)));
 	gpuErrchk(cudaMemset(d_gscore, -1, sizeof(int)));
 	gpuErrchk(cudaMemset(d_max_off, 0, sizeof(int)));
+	*/
 	// Transfer data to GPU
 	gpuErrchk(cudaMemcpy(d_h, h, sizeof(int32_t) * (qlen + 1), cudaMemcpyHostToDevice));
 	gpuErrchk(cudaMemcpy(d_qp, qp, sizeof(int8_t) * qlen * m, cudaMemcpyHostToDevice));
