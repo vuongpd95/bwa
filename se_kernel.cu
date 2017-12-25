@@ -296,7 +296,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 						if (max - m - ((mj - max_j) - (row_i - max_i)) * e_ins > zdrop) break_cnt += 1;
 					}
 				}
-				myreq = 0;
+				req = 0;
 			}
 			//__syncthreads();
 		} while (!done);
