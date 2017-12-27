@@ -75,16 +75,15 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 	__shared__ int max_ie;
 	__shared__ int gscore;
 	__shared__ int max_off;
+	__shared__ int out_h[WARP];
+	__shared__ int out_e[WARP];
 
-	int req = 0;
-	bool done;
-	int lane_id, i;
 	int in_h, in_e;
-	int out_h, out_e;
+	int lane_id, i;
 	int active_ts, beg, end;
 	int32_t *se, *sh;
 	int8_t *sqp;
-	lane_id  = threadIdx.x % WARP;
+	lane_id  = threadIdx.x;
 	/* Initialize */
 	if(lane_id == 0) {
 		max = h0;
@@ -116,7 +115,8 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 			if(lane_id >= t_lastp) break;
 			else active_ts = t_lastp;
 		} else active_ts = WARP;
-		reset(&in_h, &in_e); reset(&out_h, &out_e);
+		reset(&in_h, &in_e);
+		reset(&out_h[lane_id], &out_e[lane_id]);
 		beg = 0; end = qlen;
 
 		int t, row_i, f = 0, h1, m = 0, mj = -1;
@@ -203,17 +203,18 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 		do {
 			// We can not use shfl when two threads are in different if/else branch
 			// Keep shfl cmds outside of all if/else
-			in_h = __shfl(out_h, lane_id - 1, WARP);
-			in_e = __shfl(out_e, lane_id - 1, WARP);
 
 			if(lane_id == 0) {
 				in_h = sh[beg];
 				in_e = se[beg];
+			} else {
+				in_h = out_h[lane_id - 1];
+				in_e = out_e[lane_id - 1];
 			}
 			//__syncthreads();
 			if(check_active(in_h, in_e)) {
 				int h; 											// get H(i-1,j-1) and E(i-1,j)
-				if(lane_id != active_ts - 1) out_h = h1;
+				if(lane_id != active_ts - 1) out_h[lane_id] = h1;
 				else if(i != passes - 1) sh[beg] = h1; 			// set H(i,j-1) for the next row
 				in_h = in_h? in_h + q[beg] : 0;					// separating H and M to disallow a cigar like
 																// "100M3I3D20M"
@@ -234,7 +235,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 				//	if(lane_id != active_ts - 1) out_e = 0;		// save E(i+1,j) for the next row
 				//	else if(i != passes - 1) sh[beg] = 0;
 				//} else {
-					if(lane_id != active_ts - 1) out_e = in_e;	// save E(i+1,j) for the next row
+					if(lane_id != active_ts - 1) out_e[lane_id] = in_e;	// save E(i+1,j) for the next row
 					else if(i != passes - 1) sh[beg] = in_e;
 				//}
 
@@ -248,57 +249,31 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 			} // else ...
 		} while((beg < end));// || (lane_id != (active_ts - 1) && beg < end + 1));
 		if(lane_id != active_ts - 1) {
-			out_h = h1;
-			out_e = 0;
+			out_h[lane_id] = h1;
+			out_e[lane_id] = 0;
 		} else if(i != passes - 1) {
 			sh[beg] = h1;
 			se[beg] = 0;
 		}
 
-		req = 1;
-		do {
-			done = false;
-			// attempt to  "acquire lock"
-			bool mylock = warp_lock(req);
-			// if lock acquired, do "critical section"
-			if (mylock){
-				done = true;
-				// Critical section
-				if(beg == qlen) {
-					max_ie = gscore > out_h? max_ie : row_i;
-					gscore = gscore > out_h? gscore : out_h;
-				}
-				req = 0;
-			}
-			//__syncthreads();
-		} while (!done);
+		if(beg == qlen) {
+			max_ie = gscore > out_h[lane_id]? max_ie : row_i;
+			gscore = gscore > out_h[lane_id]? gscore : out_h[lane_id];
+		}
 
 		if(m == 0) atomicAdd(&break_cnt, 1);
 		if(break_cnt > 0) break;
 
-		req = 1;
-		do {
-			done = false;
-			// attempt to  "acquire lock"
-			bool mylock = warp_lock(req);
-			// if lock acquired, do "critical section"
-			if (mylock){
-				done = true;
-				// Critical section
-				if(m > max) {
-					max = m, max_i = row_i, max_j = mj;
-					max_off = max_off > abs(mj - row_i)? max_off : abs(mj - row_i);
-				} else if (zdrop > 0) {
-					if (i - max_i > mj - max_j) {
-						if (max - m - ((row_i - max_i) - (mj - max_j)) * e_del > zdrop) break_cnt += 1;
-					} else {
-						if (max - m - ((mj - max_j) - (row_i - max_i)) * e_ins > zdrop) break_cnt += 1;
-					}
-				}
-				req = 0;
+		if(m > max) {
+			max = m, max_i = row_i, max_j = mj;
+			max_off = max_off > abs(mj - row_i)? max_off : abs(mj - row_i);
+		} else if (zdrop > 0) {
+			if (i - max_i > mj - max_j) {
+				if (max - m - ((row_i - max_i) - (mj - max_j)) * e_del > zdrop) atomicAdd(&break_cnt, 1);
+			} else {
+				if (max - m - ((mj - max_j) - (row_i - max_i)) * e_ins > zdrop) atomicAdd(&break_cnt, 1);
 			}
-			//__syncthreads();
-		} while (!done);
+		}
 		if (break_cnt > 0) break;
 	}
 	if(lane_id == 0) {

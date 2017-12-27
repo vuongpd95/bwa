@@ -30,7 +30,7 @@
 }
 
 #define MAX_BAND_TRY 2
-#define WARP 32
+#define WARP 1024
 #define ONE_MBYTE (1024*1024)
 
 
