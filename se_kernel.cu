@@ -274,7 +274,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 			//__syncthreads();
 		} while (!done);
 
-		if(m == 0) atomicAdd(break_cnt, 1);
+		if(m == 0) atomicAdd(&break_cnt, 1);
 		if(break_cnt > 0) break;
 
 		req = 1;
@@ -303,12 +303,12 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 		if (break_cnt > 0) break;
 	}
 	if(lane_id == 0) {
-		d_max = max;
-		d_max_i = max_i;
-		d_max_j = max_j;
-		d_max_ie = max_ie;
-		d_gscore = gscore;
-		d_max_off = max_off;
+		*d_max = max;
+		*d_max_i = max_i;
+		*d_max_j = max_j;
+		*d_max_ie = max_ie;
+		*d_gscore = gscore;
+		*d_max_off = max_off;
 	}
 }
 int cuda_ksw_extend2(int qlen, const uint8_t *query, \
