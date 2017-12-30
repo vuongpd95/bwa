@@ -109,7 +109,7 @@ HOST_COMPILER ?= gcc
 NVCC          := $(CUDA_PATH)/bin/nvcc -ccbin $(HOST_COMPILER)
 
 # internal flags
-NVCCFLAGS   := -m${TARGET_SIZE} --ptxas-options=-v
+NVCCFLAGS   := -m${TARGET_SIZE} --ptxas-options=-v --maxrregcount=31
 CCFLAGS     :=
 LDFLAGS     :=
 
@@ -168,9 +168,9 @@ SAMPLE_ENABLED := 1
 
 # Gencode arguments
 ifeq ($(TARGET_ARCH),armv7l)
-SMS ?= 20 30 32 35 37 50 52 61
+SMS ?= 61
 else
-SMS ?= 20 30 35 37 50 52 61
+SMS ?= 61
 endif
 
 ifeq ($(SMS),)
