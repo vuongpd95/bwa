@@ -253,7 +253,7 @@ __global__
 void extension_kernel(int n, mem_opt_t *opt, int *l_seq, uint8_t *seq, int *i_seq, \
 	mem_chain_v *f_chns, mem_chain_t *f_a, int *i_a, mem_seed_t *seeds, int *i_seeds, \
 	int64_t l_pac, int32_t n_seqs, bntann1_t *anns, uint8_t *pac, \
-	int *na, mem_alnreg_v **avs, mem_alnreg_v *fav) {
+	int *na, mem_alnreg_v **avs, mem_alnreg_v *fav, unsigned int *d_wcnt) {
 	// opt, bns, pac, l_seq, (uint8_t*)seq, chns.a[...]
 	// return regs
 
@@ -267,14 +267,14 @@ void extension_kernel(int n, mem_opt_t *opt, int *l_seq, uint8_t *seq, int *i_se
 	bns.l_pac = l_pac;
 	bns.n_seqs = n_seqs;
 	bns.anns = anns;
-	int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
-	int i = thread_idx;
-	int cuda_num_threads = opt->cuda_num_threads;
+	int i = 0;
+
 	if(opt->flag & MEM_F_PE) {
 		int alt_n;
 		alt_n = n >> 1;
 		for(;;) {
-			if (i >= alt_n) break;
+			i = atomicAdd(d_wcnt, 1);
+			if(i >= alt_n) break;
 			avs[i<<1|0] = cuda_mem_align1_core(opt, &bns, pac, \
 				l_seq[i<<1|0], &seq[i_seq[i<<1|0]], \
 				f_chns, f_a, i_a, seeds, i_seeds, i<<1|0, n);
@@ -289,34 +289,31 @@ void extension_kernel(int n, mem_opt_t *opt, int *l_seq, uint8_t *seq, int *i_se
 			fav[i<<1|1].n = avs[i<<1|1]->n;
 			fav[i<<1|1].m = avs[i<<1|1]->m;
 
-			i += cuda_num_threads;
 		}
 	} else {
 		for(;;) {
-			if (i >= n) break;
+			i = atomicAdd(d_wcnt, 1);
+			if(i >= n) break;
+
 			avs[i] = cuda_mem_align1_core(opt, &bns, pac, \
 				l_seq[i], &seq[i_seq[i]], f_chns, f_a, i_a, \
 				seeds, i_seeds, i, n);
 			atomicAdd(na, avs[i]->n);
 			fav[i].n = avs[i]->n;
 			fav[i].m = avs[i]->m;
-			i += cuda_num_threads;
 		}
 	}
 }
 
 __global__ 
-void ret_kernel(int n, mem_opt_t *opt, mem_alnreg_v **avs, int* av_ia, mem_alnreg_t *av_a) {
-	int thread_idx, i, j, size, cuda_num_threads;
-	cuda_num_threads = opt->cuda_num_threads;
-	thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
-	i = thread_idx;
+void ret_kernel(int n, mem_opt_t *opt, mem_alnreg_v **avs, int* av_ia, mem_alnreg_t *av_a, unsigned int *d_wcnt) {
+	int i, j, size;
 	for(;;) {
+		i = atomicAdd(d_wcnt, 1);
 		if(i >= n) break;
 		j = av_ia[i];
 		size = avs[i]->n;
 		if (avs[i]-> a != NULL) memcpy(&av_a[j], avs[i]->a, size * sizeof(mem_alnreg_t));
-		i += cuda_num_threads;
 	}
 }
 
@@ -468,6 +465,9 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 
 	gpuErrchk(cudaMalloc((void**)&d_avs, n * sizeof(mem_alnreg_v*)));
 
+	unsigned int *d_wcnt;
+	gpuErrchk(cudaMalloc(&d_wcnt, sizeof(unsigned int)));
+	gpuErrchk(cudaMemset(d_wcnt, 0, sizeof(unsigned int)));
 	// print_seq(n, l_seq);
 	// print_chns(n, f_chns, f_a, i_a);
 	// print_bns_pac(bns->l_pac, bns->n_seqs);
@@ -484,7 +484,7 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 
 	extension_kernel<<<num_block, thread_per_block>>>(n, d_opt, dl_seq, d_seq, di_seq, \
 		df_chns, df_a, di_a, d_seeds, di_seeds, bns->l_pac, bns->n_seqs, d_anns, \
-		d_pac, d_av_na, d_avs, d_fav);
+		d_pac, d_av_na, d_avs, d_fav, d_wcnt);
 
 	gpuErrchk(cudaPeekAtLastError());
 	gpuErrchk(cudaDeviceSynchronize());
@@ -510,8 +510,8 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 
 	gpuErrchk(cudaMemcpy(d_av_ia, h_av_ia, n * sizeof(int), \
 			cudaMemcpyHostToDevice));
-
-	ret_kernel<<<num_block, thread_per_block>>>(n, d_opt, d_avs, d_av_ia, d_av_a);
+	gpuErrchk(cudaMemset(d_wcnt, 0, sizeof(unsigned int)));
+	ret_kernel<<<num_block, thread_per_block>>>(n, d_opt, d_avs, d_av_ia, d_av_a, d_wcnt);
 	gpuErrchk(cudaPeekAtLastError());
 	gpuErrchk(cudaDeviceSynchronize());
 
