@@ -62,6 +62,8 @@ __device__ bool warp_lock(int req){
   return ((__ffs(__ballot(req))) == ((threadIdx.x & 31) + 1));
 }
 
+__device__ int mLock = 0;
+
 extern __shared__ int32_t container[];
 __global__
 void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gscore, int *d_max_off, \
@@ -78,6 +80,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 	__shared__ int out_h[WARP];
 	__shared__ int out_e[WARP];
 
+	bool blocked = true;
 	int in_h, in_e;
 	int lane_id, i;
 	int active_ts, beg, end;
@@ -211,7 +214,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 				in_h = out_h[lane_id - 1];
 				in_e = out_e[lane_id - 1];
 			}
-			//__syncthreads();
+			__syncthreads();
 			if(check_active(in_h, in_e)) {
 				int h; 											// get H(i-1,j-1) and E(i-1,j)
 				if(lane_id != active_ts - 1) out_h[lane_id] = h1;
@@ -222,22 +225,22 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 																// so h>=0 even if M<0
 				h = h > f? h : f;
 				h1 = h;											// save H(i,j) to h1 for the next column
-				//if (beg < end) {
+				if (beg < end) {
 					mj = m > h? mj : beg; 						// record the position where max score is achieved
 					m = m > h? m : h;   						// m is stored at eh[mj+1]
-				//}
+				}
 				t = in_h - oe_del;
 				t = t > 0? t : 0;
 				in_e -= e_del;
 				in_e = in_e > t? in_e : t;   					// computed E(i+1,j)
 
-				//if(beg >= end) {
-				//	if(lane_id != active_ts - 1) out_e = 0;		// save E(i+1,j) for the next row
-				//	else if(i != passes - 1) sh[beg] = 0;
-				//} else {
+				if(beg >= end) {
+					if(lane_id != active_ts - 1) out_e[lane_id] = 0;		// save E(i+1,j) for the next row
+					else if(i != passes - 1) sh[beg] = 0;
+				} else {
 					if(lane_id != active_ts - 1) out_e[lane_id] = in_e;	// save E(i+1,j) for the next row
 					else if(i != passes - 1) sh[beg] = in_e;
-				//}
+				}
 
 				t = in_h - oe_ins;
 				t = t > 0? t : 0;
@@ -246,8 +249,10 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 
 				reset(&in_h, &in_e);
 				beg += 1;
-			} // else ...
-		} while((beg < end));// || (lane_id != (active_ts - 1) && beg < end + 1));
+			}
+			__syncthreads();
+		} while((beg < end) || (lane_id != (active_ts - 1) && beg < end + 1));
+		/*
 		if(lane_id != active_ts - 1) {
 			out_h[lane_id] = h1;
 			out_e[lane_id] = 0;
@@ -255,23 +260,40 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 			sh[beg] = h1;
 			se[beg] = 0;
 		}
-
-		if(beg == qlen) {
-			max_ie = gscore > out_h[lane_id]? max_ie : row_i;
-			gscore = gscore > out_h[lane_id]? gscore : out_h[lane_id];
+		*/
+		while(blocked) {
+			if(0 == atomicCAS(&mLock, 0, 1)) {
+				// critical section
+				if(beg == qlen) {
+					max_ie = gscore > out_h[lane_id]? max_ie : row_i;
+					gscore = gscore > out_h[lane_id]? gscore : out_h[lane_id];
+				}
+				atomicExch(&mLock, 0);
+				blocked = false;
+			}
 		}
 
 		if(m == 0) atomicAdd(&break_cnt, 1);
+		__syncthreads();
 		if(break_cnt > 0) break;
 
-		if(m > max) {
-			max = m, max_i = row_i, max_j = mj;
-			max_off = max_off > abs(mj - row_i)? max_off : abs(mj - row_i);
-		} else if (zdrop > 0) {
-			if (i - max_i > mj - max_j) {
-				if (max - m - ((row_i - max_i) - (mj - max_j)) * e_del > zdrop) atomicAdd(&break_cnt, 1);
-			} else {
-				if (max - m - ((mj - max_j) - (row_i - max_i)) * e_ins > zdrop) atomicAdd(&break_cnt, 1);
+		blocked = true;
+		while(blocked) {
+			if (break_cnt > 0) break;
+			if(0 == atomicCAS(&mLock, 0, 1)) {
+				// critical section
+				if(m > max) {
+					max = m, max_i = row_i, max_j = mj;
+					max_off = max_off > abs(mj - row_i)? max_off : abs(mj - row_i);
+				} else if (zdrop > 0) {
+					if (i - max_i > mj - max_j) {
+						if (max - m - ((row_i - max_i) - (mj - max_j)) * e_del > zdrop) break_cnt += 1;
+					} else {
+						if (max - m - ((mj - max_j) - (row_i - max_i)) * e_ins > zdrop) break_cnt += 1;
+					}
+				}
+				atomicExch(&mLock, 0);
+				blocked = false;
 			}
 		}
 		if (break_cnt > 0) break;
