@@ -487,7 +487,7 @@ void cuda_seed_extension(const mem_opt_t *opt, const bntseq_t *bns, \
 		d_pac, d_av_na, d_avs, d_fav);
 
 	gpuErrchk(cudaPeekAtLastError());
-	gpuErrchk(cudaDeviceSynchronize());
+	//gpuErrchk(cudaDeviceSynchronize());
 
 	gpuErrchk(cudaMemcpy(h_av_na, d_av_na, sizeof(int), \
 			cudaMemcpyDeviceToHost));
