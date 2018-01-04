@@ -70,6 +70,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 		int w, int oe_ins, int e_ins, int o_del, int e_del, int oe_del, int m, \
 		int tlen, int qlen, int passes, int t_lastp, int h0, int zdrop, \
 		int32_t *h, int8_t *qp, const uint8_t *target) {
+
 	__shared__ int break_cnt;
 	__shared__ int max;
 	__shared__ int max_i;
@@ -82,13 +83,13 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 
 	bool blocked = true;
 	int in_h, in_e;
-	int lane_id, i;
+	int i;
 	int active_ts, beg, end;
 	int32_t *se, *sh;
 	int8_t *sqp;
-	lane_id  = threadIdx.x;
+
 	/* Initialize */
-	if(lane_id == 0) {
+	if(threadIdx.x == 0) {
 		max = h0;
 		max_i = -1;
 		max_j = -1;
@@ -98,7 +99,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 		break_cnt = 0;
 	}
 
-	i = lane_id;
+	i = threadIdx.x;
 	sh = container;
 	se = (int32_t*)&sh[qlen + 1];
 	sqp = (int8_t*)&se[qlen + 1];
@@ -115,16 +116,16 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 	__syncthreads();
 	for(int i = 0; i < passes; i++) {
 		if(i == passes - 1) {
-			if(lane_id >= t_lastp) break;
+			if(threadIdx.x >= t_lastp) break;
 			else active_ts = t_lastp;
 		} else active_ts = WARP;
 		reset(&in_h, &in_e);
-		reset(&out_h[lane_id], &out_e[lane_id]);
+		reset(&out_h[threadIdx.x], &out_e[threadIdx.x]);
 		beg = 0; end = qlen;
 
 		int t, row_i, f = 0, h1, m = 0, mj = -1;
 		int8_t *q = &sqp[target[i] * qlen];
-		row_i = i * WARP + lane_id;
+		row_i = i * WARP + threadIdx.x;
 		// apply the band and the constraint (if provided)
 		if (beg < i - w) beg = i - w;
 		if (end > i + w + 1) end = i + w + 1;
@@ -137,87 +138,21 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 		} else h1 = 0;
 
 		__syncthreads();
-		/* original codes
-		for (i = 0; LIKELY(i < tlen); ++i) {
-			int t, f = 0, h1, m = 0, mj = -1;
-			int8_t *q = &qp[target[i] * qlen];
-			// apply the band and the constraint (if provided)
-			if (beg < i - w) beg = i - w;
-			if (end > i + w + 1) end = i + w + 1;
-			if (end > qlen) end = qlen;
-			// compute the first column
-			if (beg == 0) {
-				h1 = h0 - (o_del + e_del * (i + 1));
-				if (h1 < 0) h1 = 0;
-			} else h1 = 0;
-			for (j = beg; LIKELY(j < end); ++j) {
-				// At the beginning of the loop: eh[j] = { H(i-1,j-1), E(i,j) }, f = F(i,j) and h1 = H(i,j-1)
-				// Similar to SSE2-SW, cells are computed in the following order:
-				//   H(i,j)   = max{H(i-1,j-1)+S(i,j), E(i,j), F(i,j)}
-				//   E(i+1,j) = max{H(i,j)-gapo, E(i,j)} - gape
-				//   F(i,j+1) = max{H(i,j)-gapo, F(i,j)} - gape
-				eh_t *p = &eh[j];
-				int h, M = p->h, e = p->e; // get H(i-1,j-1) and E(i-1,j)
-				p->h = h1;          // set H(i,j-1) for the next row
-				M = M? M + q[j] : 0;// separating H and M to disallow a cigar like "100M3I3D20M"
-				h = M > e? M : e;   // e and f are guaranteed to be non-negative, so h>=0 even if M<0
-				h = h > f? h : f;
-				h1 = h;             // save H(i,j) to h1 for the next column
-				mj = m > h? mj : j; // record the position where max score is achieved
-				m = m > h? m : h;   // m is stored at eh[mj+1]
 
-				t = M - oe_del;
-				t = t > 0? t : 0;
-				e -= e_del;
-				e = e > t? e : t;   // computed E(i+1,j)
-
-				p->e = e;           // save E(i+1,j) for the next row
-
-				t = M - oe_ins;
-				t = t > 0? t : 0;
-				f -= e_ins;
-				f = f > t? f : t;   // computed F(i,j+1)
-			}
-			eh[end].h = h1; eh[end].e = 0;
-			if (j == qlen) {
-				max_ie = gscore > h1? max_ie : i;
-				gscore = gscore > h1? gscore : h1;
-			}
-			if (m == 0) break;
-			if (m > max) {
-				max = m, max_i = i, max_j = mj;
-				max_off = max_off > abs(mj - i)? max_off : abs(mj - i);
-			} else if (zdrop > 0) {
-				if (i - max_i > mj - max_j) {
-					if (max - m - ((i - max_i) - (mj - max_j)) * e_del > zdrop) break;
-				} else {
-					if (max - m - ((mj - max_j) - (i - max_i)) * e_ins > zdrop) break;
-				}
-			}
-			// This following part works well with sequential but is hard to implement in parallel
-			// update beg and end for the next round
-			for (j = beg; LIKELY(j < end) && eh[j].h == 0 && eh[j].e == 0; ++j);
-			beg = j;
-			for (j = end; LIKELY(j >= beg) && eh[j].h == 0 && eh[j].e == 0; --j);
-			end = j + 2 < qlen? j + 2 : qlen;
-			//beg = 0; end = qlen; // uncomment this line for debugging
-		}
-		*/
 		do {
-			// We can not use shfl when two threads are in different if/else branch
-			// Keep shfl cmds outside of all if/else
-
-			if(lane_id == 0) {
+			if(threadIdx.x == 0) {
 				in_h = sh[beg];
 				in_e = se[beg];
 			} else {
-				in_h = out_h[lane_id - 1];
-				in_e = out_e[lane_id - 1];
+				in_h = out_h[threadIdx.x - 1];
+				in_e = out_e[threadIdx.x - 1];
+				// if(threadIdx.x == 1)
+				//	printf("beg = %d, in_h = %d, in_e = %d.\n", beg, in_h, in_e);
 			}
 			__syncthreads();
 			if(check_active(in_h, in_e)) {
 				int h; 											// get H(i-1,j-1) and E(i-1,j)
-				if(lane_id != active_ts - 1) out_h[lane_id] = h1;
+				if(threadIdx.x != active_ts - 1) out_h[threadIdx.x] = h1;
 				else if(i != passes - 1) sh[beg] = h1; 			// set H(i,j-1) for the next row
 				in_h = in_h? in_h + q[beg] : 0;					// separating H and M to disallow a cigar like
 																// "100M3I3D20M"
@@ -225,22 +160,22 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 																// so h>=0 even if M<0
 				h = h > f? h : f;
 				h1 = h;											// save H(i,j) to h1 for the next column
-				if (beg < end) {
+				//if (beg < end) {
 					mj = m > h? mj : beg; 						// record the position where max score is achieved
 					m = m > h? m : h;   						// m is stored at eh[mj+1]
-				}
+				//}
 				t = in_h - oe_del;
 				t = t > 0? t : 0;
 				in_e -= e_del;
 				in_e = in_e > t? in_e : t;   					// computed E(i+1,j)
 
-				if(beg >= end) {
-					if(lane_id != active_ts - 1) out_e[lane_id] = 0;		// save E(i+1,j) for the next row
-					else if(i != passes - 1) sh[beg] = 0;
-				} else {
-					if(lane_id != active_ts - 1) out_e[lane_id] = in_e;	// save E(i+1,j) for the next row
+				//if(beg >= end) {
+				//	if(threadIdx.x != active_ts - 1) out_e[threadIdx.x] = 0;		// save E(i+1,j) for the next row
+				//	else if(i != passes - 1) sh[beg] = 0;
+				//} else {
+					if(threadIdx.x != active_ts - 1) out_e[threadIdx.x] = in_e;	// save E(i+1,j) for the next row
 					else if(i != passes - 1) sh[beg] = in_e;
-				}
+				//}
 
 				t = in_h - oe_ins;
 				t = t > 0? t : 0;
@@ -251,22 +186,23 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 				beg += 1;
 			}
 			__syncthreads();
-		} while((beg < end) || (lane_id != (active_ts - 1) && beg < end + 1));
-		/*
-		if(lane_id != active_ts - 1) {
-			out_h[lane_id] = h1;
-			out_e[lane_id] = 0;
+		} while((beg < end)/* || (threadIdx.x != (active_ts - 1) && beg < end + 1)*/);
+
+		if(threadIdx.x != active_ts - 1) {
+			out_h[threadIdx.x] = h1;
+			out_e[threadIdx.x] = 0;
 		} else if(i != passes - 1) {
 			sh[beg] = h1;
 			se[beg] = 0;
 		}
-		*/
+
+		__syncthreads();
 		while(blocked) {
 			if(0 == atomicCAS(&mLock, 0, 1)) {
 				// critical section
 				if(beg == qlen) {
-					max_ie = gscore > out_h[lane_id]? max_ie : row_i;
-					gscore = gscore > out_h[lane_id]? gscore : out_h[lane_id];
+					max_ie = gscore > out_h[threadIdx.x]? max_ie : row_i;
+					gscore = gscore > out_h[threadIdx.x]? gscore : out_h[threadIdx.x];
 				}
 				atomicExch(&mLock, 0);
 				blocked = false;
@@ -275,13 +211,12 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 
 		if(m == 0) atomicAdd(&break_cnt, 1);
 		__syncthreads();
-		if(break_cnt > 0) break;
+		//if(break_cnt > 0) break;
 
 		blocked = true;
 		while(blocked) {
 			if (break_cnt > 0) break;
 			if(0 == atomicCAS(&mLock, 0, 1)) {
-				// critical section
 				if(m > max) {
 					max = m, max_i = row_i, max_j = mj;
 					max_off = max_off > abs(mj - row_i)? max_off : abs(mj - row_i);
@@ -296,15 +231,18 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 				blocked = false;
 			}
 		}
-		if (break_cnt > 0) break;
+		//if (break_cnt > 0) break;
 	}
-	if(lane_id == 0) {
+
+	if(threadIdx.x == 0) {
 		*d_max = max;
 		*d_max_i = max_i;
 		*d_max_j = max_j;
 		*d_max_ie = max_ie;
 		*d_gscore = gscore;
 		*d_max_off = max_off;
+		printf("d_max = %d, d_max_i = %d, d_max_j = %d, d_max_ie = %d, d_gscore = %d, d_max_off = %d\n",\
+				*d_max, *d_max_i, *d_max_j, *d_max_ie, *d_gscore, *d_max_off);
 	}
 }
 int cuda_ksw_extend2(int qlen, const uint8_t *query, \
@@ -362,6 +300,8 @@ int cuda_ksw_extend2(int qlen, const uint8_t *query, \
 
 	passes = (int)((double)tlen / (double)WARP + 1.);
 	t_lastp = tlen - (tlen / WARP) * WARP;
+
+	// gpuErrchk(cudaDeviceSetLimit(cudaLimitMallocHeapSize, FIXED_HEAP * ONE_MBYTE));
 	// Allocate device memory
 	gpuErrchk(cudaMalloc(&d_max, sizeof(int)));
 	gpuErrchk(cudaMalloc(&d_max_j, sizeof(int)));
@@ -387,6 +327,7 @@ int cuda_ksw_extend2(int qlen, const uint8_t *query, \
 	gpuErrchk(cudaMemcpy(d_target, target, sizeof(uint8_t) * tlen, cudaMemcpyHostToDevice));
 	// The kernel
 
+	printf("Passes = %d, t_lastp = %d\n", passes, t_lastp);
 	sw_kernel<<<1, WARP, 2 * (qlen + 1) * sizeof(int32_t) + qlen * m * sizeof(int8_t)>>>\
 			(d_max, d_max_j, d_max_i, d_max_ie, d_gscore, d_max_off, \
 			w, oe_ins, e_ins, o_del, e_del, oe_del, m, \
@@ -421,7 +362,8 @@ int cuda_ksw_extend2(int qlen, const uint8_t *query, \
 	if (_gtle) *_gtle = max_ie + 1;
 	if (_gscore) *_gscore = gscore;
 	if (_max_off) *_max_off = max_off;
-
+	printf("[GPU:] max_j = %d, max_i = %d, max_ie = %d, "
+			"gscore = %d, max_off = %d\n", max_j, max_i, max_ie, gscore, max_off);
 	return max;
 }
 
