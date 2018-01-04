@@ -127,8 +127,8 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 		int8_t *q = &sqp[target[i] * qlen];
 		row_i = i * WARP + threadIdx.x;
 		// apply the band and the constraint (if provided)
-		if (beg < i - w) beg = i - w;
-		if (end > i + w + 1) end = i + w + 1;
+		if (beg < row_i - w) beg = row_i - w;
+		if (end > row_i + w + 1) end = row_i + w + 1;
 		if (end > qlen) end = qlen;
 		// reset input, output
 
