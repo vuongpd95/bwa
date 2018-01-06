@@ -109,7 +109,9 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 			se[i] = 0;
 		}
 		// qlen > 1, m = 5, qlen * m always bigger than qlen + 1
-		if(i < qlen * m) sqp[i] = qp[i];
+		if(i < qlen * m) {
+			sqp[i] = qp[i];
+		}
 		else break;
 		i += WARP;
 	}
@@ -137,22 +139,37 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 			if (h1 < 0) h1 = 0;
 		} else h1 = 0;
 
+//		if(threadIdx.x == THREAD_CHECK) {
+//			for(int k = 0; k <= qlen; k++) {
+//				printf("h[%d] = %d, e[%d] = %d\n", k, sh[k], k, se[k]);
+//			}
+//		}
 		__syncthreads();
 
-		 while(beg < end) {
-			 __syncthreads();
-			if(threadIdx.x == 0) {
-				in_h = sh[beg];
-				in_e = se[beg];
-			} else {
-				in_h = out_h[threadIdx.x - 1];
-				in_e = out_e[threadIdx.x - 1];
+		while(beg < end + 1) {
+			__syncthreads();
+			if(beg < end) {
+				if(threadIdx.x == 0) {
+					in_h = sh[beg];
+					in_e = se[beg];
+				} else {
+					in_h = out_h[threadIdx.x - 1];
+					in_e = out_e[threadIdx.x - 1];
+				}
+			}
+			__syncthreads();
+			if(beg == end) {
+				out_h[threadIdx.x] = h1;
+				out_e[threadIdx.x] = 0;
+				if(threadIdx.x == active_ts - 1 && i != passes - 1) {
+					sh[end] = h1;
+					se[end] = 0;
+				}
+				break;
 			}
 			__syncthreads();
 			if(check_active(in_h, in_e)) {
 				int local_h;
-//				if(threadIdx.x == THREAD_CHECK)
-//					printf("j = %d, M = %d, h1 = %d\n", beg, in_h, h1);
 
 				out_h[threadIdx.x] = h1;
 				if(i != passes - 1) sh[beg] = h1;
@@ -161,20 +178,18 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 				if(in_h) in_h = in_h + q[beg];
 				else in_h = 0;
 
-				//local_h = in_h > in_e? in_h : in_e;
+				// local_h = in_h > in_e? in_h : in_e;
 				if(in_h > in_e) local_h = in_h;
 				else local_h = in_e;
 
-				//local_h = local_h > f? local_h : f;
+				// local_h = local_h > f? local_h : f;
 				if(local_h < f) local_h = f;
 
-				//if(threadIdx.x == THREAD_CHECK)
-				//printf("j = %d, h = %d, q[%d] = %d\n", beg, local_h, beg, q[beg]);
 				h1 = local_h;
 
-				//mj = local_m > local_h? mj : beg;
+				// mj = local_m > local_h? mj : beg;
 				if(local_m <= local_h) mj = beg;
-				// local_m = local_m > local_h? local_m : local_h;
+				//local_m = local_m > local_h? local_m : local_h;
 				if(local_m < local_h) local_m = local_h;
 
 				t = in_h - oe_del;
@@ -192,21 +207,11 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 				f -= e_ins;
 				//f = f > t? f : t;
 				if(f < t) f = t;
-//				if(threadIdx.x == THREAD_CHECK)
-//					printf("j = %d, M = %d, h = %d, h1 = %d, e = %d, f = %d, t = %d\n", \
-//							beg, in_h, local_h, h1, in_e, f, t);
 				reset(&in_h, &in_e);
 				beg += 1;
 			}
 		}
-		out_h[threadIdx.x] = h1;
-		out_e[threadIdx.x] = 0;
-		if(threadIdx.x == active_ts - 1 && i != passes - 1) {
-				sh[end] = h1;
-				se[end] = 0;
-		}
 
-//		__syncthreads();
 		blocked = true;
 		while(blocked) {
 			if(0 == atomicCAS(&mLock, 0, 1)) {
@@ -224,23 +229,20 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 				blocked = false;
 			}
 		}
-
-		//if(m == 0) atomicAdd(&break_cnt, 1);
-		//__syncthreads();
-		//if(break_cnt > 0) break;
+//		__syncthreads();
 
 		blocked = true;
 		while(blocked) {
-			//if (break_cnt > 0) break;
+			if (break_cnt > 0) break;
 			if(0 == atomicCAS(&mLock, 0, 1)) {
-				if(m > max) {
-					max = m, max_i = row_i, max_j = mj;
+				if(local_m > max) {
+					max = local_m, max_i = row_i, max_j = mj;
 					max_off = max_off > abs(mj - row_i)? max_off : abs(mj - row_i);
 				} else if (zdrop > 0) {
 					if (i - max_i > mj - max_j) {
-						if (max - m - ((row_i - max_i) - (mj - max_j)) * e_del > zdrop) break_cnt += 1;
+						if (max - local_m - ((row_i - max_i) - (mj - max_j)) * e_del > zdrop) break_cnt += 1;
 					} else {
-						if (max - m - ((mj - max_j) - (row_i - max_i)) * e_ins > zdrop) break_cnt += 1;
+						if (max - local_m - ((mj - max_j) - (row_i - max_i)) * e_ins > zdrop) break_cnt += 1;
 					}
 				}
 				atomicExch(&mLock, 0);
@@ -249,6 +251,10 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 		}
 		//if (break_cnt > 0) break;
 	}
+//	if(threadIdx.x == tcheck && DEBUG == 1) {
+//		printf("max = %d, max_i = %d, max_j = %d, max_ie = %d, gscore = %d, max_off = %d\n",\
+//				max, max_i, max_j, max_ie, gscore, max_off);
+//	}
 	__syncthreads();
 	if(threadIdx.x == 0) {
 		*d_max = max;
