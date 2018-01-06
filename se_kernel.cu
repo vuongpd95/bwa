@@ -223,7 +223,6 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 					} else if(gscore == h1 && max_ie < row_i) {
 						max_ie = row_i;
 					}
-
 				}
 				atomicExch(&mLock, 0);
 				blocked = false;
@@ -239,7 +238,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 					max = local_m, max_i = row_i, max_j = mj;
 					max_off = max_off > abs(mj - row_i)? max_off : abs(mj - row_i);
 				} else if (zdrop > 0) {
-					if (i - max_i > mj - max_j) {
+					if (row_i - max_i > mj - max_j) {
 						if (max - local_m - ((row_i - max_i) - (mj - max_j)) * e_del > zdrop) break_cnt += 1;
 					} else {
 						if (max - local_m - ((mj - max_j) - (row_i - max_i)) * e_ins > zdrop) break_cnt += 1;
@@ -251,10 +250,6 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 		}
 		//if (break_cnt > 0) break;
 	}
-//	if(threadIdx.x == tcheck && DEBUG == 1) {
-//		printf("max = %d, max_i = %d, max_j = %d, max_ie = %d, gscore = %d, max_off = %d\n",\
-//				max, max_i, max_j, max_ie, gscore, max_off);
-//	}
 	__syncthreads();
 	if(threadIdx.x == 0) {
 		*d_max = max;
@@ -263,8 +258,6 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 		*d_max_ie = max_ie;
 		*d_gscore = gscore;
 		*d_max_off = max_off;
-//		printf("d_max = %d, d_max_i = %d, d_max_j = %d, d_max_ie = %d, d_gscore = %d, d_max_off = %d\n",\
-//				*d_max, *d_max_i, *d_max_j, *d_max_ie, *d_gscore, *d_max_off);
 	}
 }
 int cuda_ksw_extend2(int qlen, const uint8_t *query, \
