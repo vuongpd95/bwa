@@ -79,7 +79,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 		int tlen, int qlen, int passes, int t_lastp, int h0, int zdrop, \
 		int32_t *h, int8_t *qp, const uint8_t *target) {
 
-	__shared__ int break_cnt;
+//	__shared__ int break_cnt;
 	__shared__ int max;
 	__shared__ int max_i;
 	__shared__ int max_j;
@@ -104,7 +104,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 		max_ie = -1;
 		gscore = -1;
 		max_off = 0;
-		break_cnt = 0;
+//		break_cnt = 0;
 	}
 
 	i = threadIdx.x;
@@ -234,25 +234,29 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 				blocked = false;
 			}
 		}
-
+//		if(local_m == 0) atomicAdd(&break_cnt, 1);
+//		__syncthreads();
+//		if(break_cnt > 0) break;
 		blocked = true;
 		while(blocked) {
 			if(0 == atomicCAS(&mLock, 0, 1)) {
 				if(local_m > max) {
 					max = local_m, max_i = row_i, max_j = mj;
 					max_off = max_off > abs(mj - row_i)? max_off : abs(mj - row_i);
-				} else if (zdrop > 0) {
-					if (row_i - max_i > mj - max_j) {
-						if (max - local_m - ((row_i - max_i) - (mj - max_j)) * e_del > zdrop) break_cnt += 1;
-					} else {
-						if (max - local_m - ((mj - max_j) - (row_i - max_i)) * e_ins > zdrop) break_cnt += 1;
-					}
 				}
+//				else if (zdrop > 0) {
+//					if (row_i - max_i > mj - max_j) {
+//						if (max - local_m - ((row_i - max_i) - (mj - max_j)) * e_del > zdrop) break_cnt += 1;
+//					} else {
+//						if (max - local_m - ((mj - max_j) - (row_i - max_i)) * e_ins > zdrop) break_cnt += 1;
+//					}
+//				}
 				atomicExch(&mLock, 0);
 				blocked = false;
 			}
 		}
-		//if (break_cnt > 0) break;
+//		__syncthreads();
+//		if(break_cnt > 0) break;
 	}
 	__syncthreads();
 
