@@ -48,8 +48,16 @@ void print_mem_info()
  *** SW extension ***
  ********************/
 __device__
-bool check_active(int32_t h, int32_t e) {
-	if(h != -1 && e != -1) return true;
+bool check_active(int32_t h, int32_t e, int *wait_cnt, int beg, int *out_h, int *out_e)
+{
+	if(h != -1 && e != -1) {
+		if(*wait_cnt == beg) return true;
+		else {
+			*wait_cnt += 1;
+			*out_h = 0; *out_e = 0;
+			return false;
+		}
+	}
 	else return false;
 }
 __device__
@@ -83,7 +91,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 
 	bool blocked = true;
 	int in_h, in_e;
-	int i;
+	int i, k, wait_cnt;
 	int active_ts, beg, end;
 	int32_t *se, *sh;
 	int8_t *sqp;
@@ -124,6 +132,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 		reset(&in_h, &in_e);
 		reset(&out_h[threadIdx.x], &out_e[threadIdx.x]);
 		beg = 0; end = qlen;
+		wait_cnt = 0;
 
 		int t, row_i, f = 0, h1, local_m = 0, mj = -1;
 		row_i = i * WARP + threadIdx.x;
@@ -139,43 +148,37 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 			if (h1 < 0) h1 = 0;
 		} else h1 = 0;
 
-//		if(threadIdx.x == THREAD_CHECK) {
-//			for(int k = 0; k <= qlen; k++) {
-//				printf("h[%d] = %d, e[%d] = %d\n", k, sh[k], k, se[k]);
-//			}
-//		}
 		__syncthreads();
 
-		while(beg < end + 1) {
-			__syncthreads();
-			if(beg < end) {
+		for(k = beg; k <= end;) {
+			if(k < end) {
 				if(threadIdx.x == 0) {
-					in_h = sh[beg];
-					in_e = se[beg];
+					in_h = sh[k];
+					in_e = se[k];
 				} else {
 					in_h = out_h[threadIdx.x - 1];
 					in_e = out_e[threadIdx.x - 1];
 				}
 			}
 			__syncthreads();
-			if(beg == end) {
+			if(k == end) {
 				out_h[threadIdx.x] = h1;
 				out_e[threadIdx.x] = 0;
-				if(threadIdx.x == active_ts - 1 && i != passes - 1) {
+				if(threadIdx.x == active_ts - 1) {
 					sh[end] = h1;
 					se[end] = 0;
 				}
 				break;
 			}
 			__syncthreads();
-			if(check_active(in_h, in_e)) {
+			if(check_active(in_h, in_e, &wait_cnt, beg, &out_h[threadIdx.x], &out_e[threadIdx.x])) {
 				int local_h;
 
 				out_h[threadIdx.x] = h1;
-				if(i != passes - 1) sh[beg] = h1;
+				if(threadIdx.x == active_ts - 1) sh[k] = h1;
 
 				//in_h = in_h? in_h + q[beg] : 0;
-				if(in_h) in_h = in_h + q[beg];
+				if(in_h) in_h = in_h + q[k];
 				else in_h = 0;
 
 				// local_h = in_h > in_e? in_h : in_e;
@@ -188,7 +191,7 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 				h1 = local_h;
 
 				// mj = local_m > local_h? mj : beg;
-				if(local_m <= local_h) mj = beg;
+				if(local_m <= local_h) mj = k;
 				//local_m = local_m > local_h? local_m : local_h;
 				if(local_m < local_h) local_m = local_h;
 
@@ -198,8 +201,9 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 				in_e -= e_del;
 				//in_e = in_e > t? in_e : t;
 				if(in_e < t) in_e = t;
+
 				out_e[threadIdx.x] = in_e;
-				if(i != passes - 1) se[beg] = in_e;
+				if(threadIdx.x == active_ts - 1) se[k] = in_e;
 
 				t = in_h - oe_ins;
 				//t = t > 0? t : 0;
@@ -208,31 +212,31 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 				//f = f > t? f : t;
 				if(f < t) f = t;
 				reset(&in_h, &in_e);
-				beg += 1;
+				k += 1;
 			}
+			__syncthreads();
 		}
 
 		blocked = true;
 		while(blocked) {
 			if(0 == atomicCAS(&mLock, 0, 1)) {
 				// critical section
-				if(beg == qlen) {
+				if(k == qlen) {
 					if(gscore < h1) {
 						max_ie = row_i;
 						gscore = h1;
 					} else if(gscore == h1 && max_ie < row_i) {
 						max_ie = row_i;
 					}
+
 				}
 				atomicExch(&mLock, 0);
 				blocked = false;
 			}
 		}
-//		__syncthreads();
 
 		blocked = true;
 		while(blocked) {
-			if (break_cnt > 0) break;
 			if(0 == atomicCAS(&mLock, 0, 1)) {
 				if(local_m > max) {
 					max = local_m, max_i = row_i, max_j = mj;
@@ -251,14 +255,13 @@ void sw_kernel(int *d_max, int *d_max_j, int *d_max_i, int *d_max_ie, int *d_gsc
 		//if (break_cnt > 0) break;
 	}
 	__syncthreads();
-	if(threadIdx.x == 0) {
-		*d_max = max;
-		*d_max_i = max_i;
-		*d_max_j = max_j;
-		*d_max_ie = max_ie;
-		*d_gscore = gscore;
-		*d_max_off = max_off;
-	}
+
+	*d_max = max;
+	*d_max_i = max_i;
+	*d_max_j = max_j;
+	*d_max_ie = max_ie;
+	*d_gscore = gscore;
+	*d_max_off = max_off;
 }
 int cuda_ksw_extend2(int qlen, const uint8_t *query, \
 		int tlen, const uint8_t *target, \
